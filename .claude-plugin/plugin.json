@@ -1,0 +1,8 @@
+{
+  "name": "crew",
+  "version": "0.1.0",
+  "description": "Six subagents, each pinned to the cheapest model that holds for its job: quick (haiku), scout and coder (sonnet), planner and reviewer (opus), architect (fable).",
+  "author": {
+    "name": "Tanveer Hoque"
+  }
+}

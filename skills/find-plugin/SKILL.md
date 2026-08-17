@@ -9,9 +9,16 @@ Check the built-ins first. `SearchPlugins` and `SearchSkills` cover the user's
 own catalog and are cheaper and already vetted. Use this skill for the wider
 public catalog (~33k GitHub repos), or when those return nothing.
 
+Run `find.js`, which sits next to this SKILL.md. Use the absolute path of this
+skill's directory — `$CLAUDE_PLUGIN_ROOT` is only set for hooks, not in the
+shell, so it will not expand:
+
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/skills/find-plugin/find.js" -n 8 <search terms>
+node "<this skill's directory>/find.js" -n 8 <search terms>
 ```
+
+If that path is not to hand, find it with
+`ls -td ~/.claude/plugins/cache/governor/governor/*/ | head -1`.
 
 Queries are capped at 32 characters by the API, so use keywords, not sentences.
 

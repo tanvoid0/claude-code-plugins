@@ -5,11 +5,16 @@ description: Report what every installed Claude Code plugin costs in always-on c
 
 # plugin-audit
 
-Run:
+Run `audit.js`, which sits next to this SKILL.md. Use the absolute path of this
+skill's directory — `$CLAUDE_PLUGIN_ROOT` is only set for hooks, not in the
+shell, so it will not expand:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/skills/plugin-audit/audit.js"
+node "<this skill's directory>/audit.js"
 ```
+
+If that path is not to hand, find it with
+`ls -td ~/.claude/plugins/cache/governor/governor/*/ | head -1`.
 
 It shells out to `claude plugin list` and `claude plugin details`, so it takes a
 few seconds. Show the table as-is; it is already compact.

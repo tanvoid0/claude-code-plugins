@@ -14,7 +14,7 @@ node "<this skill's directory>/audit.js"
 ```
 
 If that path is not to hand, find it with
-`ls -td ~/.claude/plugins/cache/governor/governor/*/ | head -1`.
+`ls -d ~/.claude/plugins/cache/governor/governor/*/ | sort -V | tail -1`.
 
 It shells out to `claude plugin list` and `claude plugin details`, so it takes a
 few seconds. Show the table as-is; it is already compact.

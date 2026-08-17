@@ -18,7 +18,7 @@ node "<this skill's directory>/find.js" -n 8 <search terms>
 ```
 
 If that path is not to hand, find it with
-`ls -td ~/.claude/plugins/cache/governor/governor/*/ | head -1`.
+`ls -d ~/.claude/plugins/cache/governor/governor/*/ | sort -V | tail -1`.
 
 Queries are capped at 32 characters by the API, so use keywords, not sentences.
 

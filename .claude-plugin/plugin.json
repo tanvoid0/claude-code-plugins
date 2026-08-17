@@ -1,0 +1,22 @@
+{
+  "name": "governor",
+  "version": "0.1.0",
+  "description": "Token budget gate. Tallies output tokens off the session transcript, warns when spend or burn rate runs hot, and blocks tool calls once the budget is gone.",
+  "author": {
+    "name": "Tanveer Hoque"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/governor.js\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

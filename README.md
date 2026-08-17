@@ -43,6 +43,19 @@ Off switches: `"enabled": false`, or `GOVERNOR_OFF=1` in the environment.
 
 ## Install
 
+## Skills
+
+Two on-demand skills, ~126 tokens always-on between them.
+
+- **`plugin-audit`** — what every installed plugin costs in always-on context,
+  sorted, with the `disable` commands. Shells out to `claude plugin list` and
+  `claude plugin details`.
+- **`find-plugin`** — searches the awesomeclaudeplugins.com catalog (~33k repos)
+  and prints install commands. It never installs: a plugin's hooks run on this
+  machine at every session start, so that stays a human decision.
+
+## Install
+
 ```bash
 claude plugin marketplace add D:/production/ai/plugins/governor
 ```
@@ -57,8 +70,13 @@ claude plugin install governor@governor
 node hooks/governor.js --selftest
 ```
 
-Covers incremental reads, duplicate streaming lines, partial trailing lines,
-transcript truncation, window expiry, and each gate firing.
+```bash
+node skills/plugin-audit/audit.js --selftest && node skills/find-plugin/find.js --selftest
+```
+
+The gate check covers incremental reads, duplicate streaming lines, partial
+trailing lines, transcript truncation, window expiry, and each gate firing. The
+skill checks cover the CLI output parsers and the result formatter.
 
 ## Notes
 

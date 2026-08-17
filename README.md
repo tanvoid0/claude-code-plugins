@@ -23,7 +23,7 @@ repo-specific rules there.
 ## Install
 
 ```bash
-claude plugin marketplace add D:/production/claude-crew
+claude plugin marketplace add D:/production/ai/plugins/crew
 ```
 
 ```bash

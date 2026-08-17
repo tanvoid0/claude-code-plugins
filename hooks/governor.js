@@ -154,6 +154,7 @@ function decide(cfg, state, now) {
 
   const canWarn = (last) => now - last >= cfg.rewarnMinutes * 60000;
 
+
   if (recent >= cfg.burnTokens && canWarn(state.burnWarnedAt)) {
     state.burnWarnedAt = now;
     return {
@@ -181,6 +182,16 @@ function decide(cfg, state, now) {
   return null;
 }
 
+// A hard deny blocks every tool, including the edit that would raise the
+// budget — which strands the session until someone opens the file by hand.
+// Reading or editing the config itself is always allowed, so the way out stays
+// reachable from inside the session.
+function targetsConfig(input) {
+  if (!['Read', 'Edit', 'Write', 'NotebookEdit'].includes(input.tool_name)) return false;
+  const p = input.tool_input && input.tool_input.file_path;
+  return typeof p === 'string' && /[\\/]governor\.json$/.test(p);
+}
+
 function main() {
   if (process.env.GOVERNOR_OFF === '1') return;
 
@@ -196,6 +207,7 @@ function main() {
   const verdict = decide(cfg, state, now);
   saveState(input.session_id, state);
   if (!verdict) return;
+  if (verdict.deny && targetsConfig(input)) return;
 
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
@@ -265,6 +277,14 @@ function selftest() {
   const burn = { ...cfg, burnTokens: 250 };
   v = decide(burn, fast, t0 + 60000);
   assert.ok(v && !v.deny && /Burn rate/.test(v.message), 'burn gate warns under budget');
+
+  // The escape hatch: editing the config is never blocked, so a denied session
+  // can still be given a bigger budget from inside.
+  assert.ok(targetsConfig({ tool_name: 'Edit', tool_input: { file_path: 'D:/p/.claude/governor.json' } }), 'editing the config is exempt');
+  assert.ok(targetsConfig({ tool_name: 'Read', tool_input: { file_path: '/home/u/.claude/governor.json' } }), 'reading the config is exempt');
+  assert.ok(!targetsConfig({ tool_name: 'Bash', tool_input: { command: 'vi governor.json' } }), 'bash is never exempt');
+  assert.ok(!targetsConfig({ tool_name: 'Edit', tool_input: { file_path: 'src/governor.json.bak' } }), 'only the config itself is exempt');
+  assert.ok(!targetsConfig({ tool_name: 'Edit', tool_input: {} }), 'missing path is not exempt');
 
   // Stale spend falls out of the window.
   assert.strictEqual(burnRate(fast, t0 + 10 * 60000, 5), 0, 'window expires');

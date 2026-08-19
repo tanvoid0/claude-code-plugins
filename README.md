@@ -34,8 +34,7 @@ past all but the very longest.
 
 ## Config
 
-`.claude/governor.json` in the project, or `~/.claude/governor.json` for all of
-them. Project wins. Every field is optional.
+`~/.claude/governor.json` sets it for every project. Every field is optional.
 
 ```json
 {
@@ -50,10 +49,20 @@ them. Project wins. Every field is optional.
 }
 ```
 
-`ceiling` is read from the user config only — a project file cannot raise its
-own hard stop, only lower it. Raising `budget` mid-session takes effect on the
-next tool call — no restart.
-Off switches: `"enabled": false`, or `GOVERNOR_OFF=1` in the environment.
+`.claude/governor.json` in a project may then adjust **`budget`,
+`burnTokens`, `burnMinutes` and `rewarnMinutes`** — and nothing else.
+
+That split is the whole design, so it is worth being blunt about why. A denied
+session is still allowed to edit the project file; that is the escape hatch
+that keeps it from being stranded with no way to ask for more. Which means
+anything the project file can set, a cornered model can set to let itself out.
+So the project file tunes *when the gate speaks*. Whether it stops at all —
+`enabled`, `ceiling`, and both ratios — is yours, in the user file. The stop
+is clamped to the ceiling however the numbers are arranged.
+
+Raising `budget` mid-session takes effect on the next tool call — no restart.
+Off switches: `"enabled": false` in the user file, or `GOVERNOR_OFF=1` in the
+environment.
 
 ## Skills
 
@@ -94,5 +103,8 @@ skill checks cover the CLI output parsers and the result formatter.
 
 The hook runs on every tool call, so it costs a node start (~50ms) each time.
 It never throws: any failure exits 0 with no output and the tool call proceeds.
-State lives in `%TEMP%/claude-governor/<session_id>.json` and is read
-incrementally, so a long transcript is parsed once, not once per call.
+State lives in `~/.claude/governor-state/<session_id>.json` and is read
+incrementally, so a long transcript is parsed once, not once per call. Home
+rather than the temp directory on purpose — `/tmp` is world-writable on Linux
+and macOS, and a predictable path there is a predictable path for everyone
+else on the machine too.

@@ -27,7 +27,15 @@ const DEFAULTS = {
   rewarnMinutes: 10,     // floor between repeated warnings
 };
 
-const STATE_DIR = path.join(os.tmpdir(), 'claude-governor');
+// State lives under the user's home, not os.tmpdir(): on Linux and macOS /tmp
+// is world-writable, so a predictable path there lets any other local user
+// read, poison or symlink the tally.
+const STATE_DIR = path.join(os.homedir(), '.claude', 'governor-state');
+
+// The first call after a resume can face a very large transcript. Read at most
+// this much per invocation and let the next call catch up, rather than pulling
+// a multi-hundred-MB delta into memory inside a 5s hook.
+const MAX_READ = 8 << 20;
 
 function readStdin() {
   try {
@@ -41,41 +49,76 @@ function userConfig(home) {
   return path.join(home, '.claude', 'governor.json');
 }
 
+// A denied session is still allowed to edit the project config — that is the
+// escape hatch. So the project file must not be able to switch the gate off,
+// or the hatch is a bypass and the ceiling is decoration. The project may tune
+// when the gate speaks; whether it stops at all belongs to the user file.
+const PROJECT_FIELDS = ['budget', 'burnTokens', 'burnMinutes', 'rewarnMinutes'];
+
 function loadConfig(cwd, home = os.homedir()) {
-  // Project config wins over user config wins over defaults. A missing or
-  // malformed file is not an error — it just means defaults.
+  // User config wins over defaults; the project file then adjusts the fields it
+  // is allowed to. A missing or malformed file is not an error — just defaults.
   const cfg = { ...DEFAULTS };
-  let ceiling = DEFAULTS.ceiling;
   const user = userConfig(home);
-  const candidates = [user, cwd ? path.join(cwd, '.claude', 'governor.json') : null];
-  for (const file of candidates) {
-    if (!file) continue;
+  try {
+    Object.assign(cfg, JSON.parse(fs.readFileSync(user, 'utf8')));
+  } catch { /* absent or unparseable: keep the defaults */ }
+
+  if (cwd) {
     try {
-      const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-      Object.assign(cfg, raw);
-      // Only the user file sets the ceiling. A project file — or the model
-      // editing one mid-session — cannot lift its own hard stop.
-      if (file === user && typeof raw.ceiling === 'number') ceiling = raw.ceiling;
+      const raw = JSON.parse(fs.readFileSync(path.join(cwd, '.claude', 'governor.json'), 'utf8'));
+      for (const k of PROJECT_FIELDS) {
+        if (typeof raw[k] === 'number') cfg[k] = raw[k];
+      }
     } catch { /* absent or unparseable: keep what we have */ }
   }
-  cfg.ceiling = ceiling;
-  cfg.budget = Math.min(cfg.budget, ceiling);
+
+  if (typeof cfg.ceiling !== 'number' || !(cfg.ceiling > 0)) cfg.ceiling = DEFAULTS.ceiling;
+  if (typeof cfg.budget !== 'number' || !(cfg.budget > 0)) cfg.budget = DEFAULTS.budget;
+  cfg.budget = Math.min(cfg.budget, cfg.ceiling);
   return cfg;
 }
 
-function loadState(sessionId) {
-  try {
-    const raw = fs.readFileSync(path.join(STATE_DIR, sessionId + '.json'), 'utf8');
-    const s = JSON.parse(raw);
-    if (typeof s.offset === 'number' && typeof s.output === 'number') return s;
-  } catch { /* first call this session */ }
+function freshState() {
   return { offset: 0, output: 0, window: [], seen: [], softWarnedAt: 0, burnWarnedAt: 0 };
+}
+
+// The state file is input, not memory: it outlives the process and sits on
+// disk. Every field is checked, so a truncated or tampered file costs the tally
+// and nothing else — before this, a non-array `window` threw on the next tool
+// call and kept throwing for the rest of the session.
+function loadState(sessionId) {
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
+  try {
+    const s = JSON.parse(fs.readFileSync(statePath(sessionId), 'utf8'));
+    if (!s || typeof s !== 'object') return freshState();
+    return {
+      offset: num(s.offset),
+      output: num(s.output),
+      window: Array.isArray(s.window)
+        ? s.window.filter((e) => Array.isArray(e) && typeof e[0] === 'number' && typeof e[1] === 'number')
+        : [],
+      seen: Array.isArray(s.seen) ? s.seen.filter((id) => typeof id === 'string') : [],
+      softWarnedAt: num(s.softWarnedAt),
+      burnWarnedAt: num(s.burnWarnedAt),
+    };
+  } catch { /* absent, unreadable or malformed: first call this session */ }
+  return freshState();
+}
+
+// session_id arrives over stdin. It is a uuid in practice, but it names a file,
+// so anything outside [A-Za-z0-9._-] is replaced rather than trusted.
+function statePath(sessionId) {
+  return path.join(
+    STATE_DIR,
+    String(sessionId).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 128) + '.json',
+  );
 }
 
 function saveState(sessionId, state) {
   try {
-    fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.writeFileSync(path.join(STATE_DIR, sessionId + '.json'), JSON.stringify(state));
+    fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(statePath(sessionId), JSON.stringify(state), { mode: 0o600 });
   } catch { /* a lost tally is better than a broken tool call */ }
 }
 
@@ -98,7 +141,7 @@ function tally(transcriptPath, state, now) {
     }
     if (size === state.offset) return state;
 
-    const len = size - state.offset;
+    const len = Math.min(size - state.offset, MAX_READ);
     const buf = Buffer.allocUnsafe(len);
     fs.readSync(fd, buf, 0, len, state.offset);
     const text = buf.toString('utf8');
@@ -148,8 +191,10 @@ function fmt(n) {
 }
 
 function decide(cfg, state, now) {
-  const hard = cfg.budget * cfg.hardRatio;
-  const soft = cfg.budget * cfg.softRatio;
+  // Both ends clamped: no combination of budget and ratio puts the stop past
+  // the ceiling, and the soft warning cannot land after the hard one.
+  const hard = Math.min(cfg.budget * cfg.hardRatio, cfg.ceiling);
+  const soft = Math.min(cfg.budget * cfg.softRatio, hard);
   const recent = burnRate(state, now, cfg.burnMinutes);
   const spent = state.output;
 
@@ -332,6 +377,24 @@ function selftest() {
   fs.writeFileSync(projFile, JSON.stringify({ budget: 50000 }));
   assert.strictEqual(loadConfig(proj, home).budget, 50000, 'a smaller project budget is honoured');
 
+  // A project file may tune the warnings. It may not switch the gate off, or
+  // stretch the ratio past the ceiling — a denied session is allowed to write
+  // this file, so anything it can set here it can set to escape.
+  fs.writeFileSync(projFile, JSON.stringify({ enabled: false, hardRatio: 100, softRatio: 99, ceiling: 9e9 }));
+  loaded = loadConfig(proj, home);
+  assert.strictEqual(loaded.enabled, true, 'project cannot disable the gate');
+  assert.strictEqual(loaded.hardRatio, DEFAULTS.hardRatio, 'project cannot stretch hardRatio');
+  assert.strictEqual(loaded.softRatio, DEFAULTS.softRatio, 'project cannot stretch softRatio');
+  assert.strictEqual(loaded.ceiling, 300000, 'project cannot set the ceiling');
+  fs.writeFileSync(projFile, JSON.stringify({ burnTokens: 999, burnMinutes: 2 }));
+  loaded = loadConfig(proj, home);
+  assert.strictEqual(loaded.burnTokens, 999, 'project tunes the burn window');
+  assert.strictEqual(loaded.burnMinutes, 2, 'project tunes the burn window');
+
+  // Even with a hostile ratio in hand, the stop lands on the ceiling.
+  const stretched = { ...cfg, budget: 1000, ceiling: 1000, hardRatio: 100 };
+  assert.ok(decide(stretched, { ...st, output: 1200 }, late).deny, 'ceiling caps the stop');
+
   // ...and the escape hatch stops at the same line: the user file stays
   // readable while denied, but only the project file can be written.
   assert.ok(targetsConfig({ tool_name: 'Read', tool_input: { file_path: userFile } }, home), 'user config stays readable');
@@ -339,6 +402,22 @@ function selftest() {
   assert.ok(targetsConfig({ tool_name: 'Write', tool_input: { file_path: projFile } }, home), 'project config is the self-extension');
   fs.rmSync(home, { recursive: true, force: true });
   fs.rmSync(proj, { recursive: true, force: true });
+
+  // A tampered or truncated state file costs the tally and nothing else. This
+  // used to throw on every tool call for the rest of the session.
+  for (const bad of ['{"offset":0,"output":5,"window":"nope","seen":[]}', '{"window":[[1,2],"x"],"seen":[1,2]}', 'not json', '[]', 'null']) {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.writeFileSync(statePath('selftest-bad'), bad);
+    const s2 = loadState('selftest-bad');
+    assert.ok(Array.isArray(s2.window) && Array.isArray(s2.seen), 'state arrays always arrays: ' + bad);
+    assert.doesNotThrow(() => decide(cfg, s2, t0), 'malformed state does not throw: ' + bad);
+  }
+  fs.rmSync(statePath('selftest-bad'), { force: true });
+
+  // session_id names a file, so it cannot walk out of the state directory.
+  for (const id of ['../../evil', 'a/b', 'C:\\Windows\\x', '..', '']) {
+    assert.strictEqual(path.dirname(statePath(id)), STATE_DIR, 'state stays in its directory: ' + id);
+  }
 
   // Stale spend falls out of the window.
   assert.strictEqual(burnRate(fast, t0 + 10 * 60000, 5), 0, 'window expires');
@@ -353,4 +432,7 @@ function selftest() {
 }
 
 if (process.argv.includes('--selftest')) selftest();
-else main();
+// The header promises this never throws. Make that structural rather than a
+// property of every line above it: a hook that dies noisily on every tool call
+// is worse than one that quietly lets the call through.
+else try { main(); } catch { /* fail open */ }

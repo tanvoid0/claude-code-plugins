@@ -16,7 +16,10 @@ const DEFAULTS = {
   enabled: true,
   // Budget is in OUTPUT tokens: they drive cost and they are what a runaway
   // loop actually burns. Cache reads are ~0.1x and are ignored on purpose.
-  budget: 120000,
+  budget: 200000,
+  // The model may raise `budget` mid-session (config edits are never blocked),
+  // but never past `ceiling` — that one is the user's, from ~/.claude only.
+  ceiling: 350000,
   softRatio: 0.6,        // warn once at 60% of budget
   hardRatio: 1.0,        // deny tool calls at 100%
   burnTokens: 25000,     // ...or if this many output tokens land
@@ -34,20 +37,29 @@ function readStdin() {
   }
 }
 
-function loadConfig(cwd) {
+function userConfig(home) {
+  return path.join(home, '.claude', 'governor.json');
+}
+
+function loadConfig(cwd, home = os.homedir()) {
   // Project config wins over user config wins over defaults. A missing or
   // malformed file is not an error — it just means defaults.
   const cfg = { ...DEFAULTS };
-  const candidates = [
-    path.join(os.homedir(), '.claude', 'governor.json'),
-    cwd ? path.join(cwd, '.claude', 'governor.json') : null,
-  ];
+  let ceiling = DEFAULTS.ceiling;
+  const user = userConfig(home);
+  const candidates = [user, cwd ? path.join(cwd, '.claude', 'governor.json') : null];
   for (const file of candidates) {
     if (!file) continue;
     try {
-      Object.assign(cfg, JSON.parse(fs.readFileSync(file, 'utf8')));
+      const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+      Object.assign(cfg, raw);
+      // Only the user file sets the ceiling. A project file — or the model
+      // editing one mid-session — cannot lift its own hard stop.
+      if (file === user && typeof raw.ceiling === 'number') ceiling = raw.ceiling;
     } catch { /* absent or unparseable: keep what we have */ }
   }
+  cfg.ceiling = ceiling;
+  cfg.budget = Math.min(cfg.budget, ceiling);
   return cfg;
 }
 
@@ -142,13 +154,17 @@ function decide(cfg, state, now) {
   const spent = state.output;
 
   if (spent >= hard) {
+    const head =
+      `Token budget spent: ${fmt(spent)} of ${fmt(cfg.budget)} output tokens. ` +
+      `Tool calls are blocked. Summarise for the user what is done and what is left.`;
     return {
       deny: true,
-      message:
-        `Token budget spent: ${fmt(spent)} of ${fmt(cfg.budget)} output tokens. ` +
-        `Tool calls are blocked. Stop, tell the user what is done and what is left, ` +
-        `and agree a smaller plan before continuing. To raise the ceiling, they can ` +
-        `set "budget" in .claude/governor.json (or "enabled": false to turn this off).`,
+      message: cfg.budget >= cfg.ceiling
+        ? head + ` This is the ceiling (${fmt(cfg.ceiling)}) — only the user can lift ` +
+          `it, in ~/.claude/governor.json. Agree a smaller plan, or a fresh session.`
+        : head + ` If the remaining work genuinely needs it, say so in chat and raise ` +
+          `"budget" in .claude/governor.json (headroom to ${fmt(cfg.ceiling)}, the ` +
+          `ceiling only the user can lift). Do not raise it to keep a loop going.`,
     };
   }
 
@@ -184,12 +200,20 @@ function decide(cfg, state, now) {
 
 // A hard deny blocks every tool, including the edit that would raise the
 // budget — which strands the session until someone opens the file by hand.
-// Reading or editing the config itself is always allowed, so the way out stays
-// reachable from inside the session.
-function targetsConfig(input) {
+// So config edits stay allowed, and that IS the self-extension: a denied
+// session can hand itself more budget, up to the ceiling. The user file, where
+// the ceiling lives, stays readable but not writable while denied — otherwise
+// the ceiling is only a suggestion. (Bash was never exempt, nor is it now.)
+function samePath(a, b) {
+  const [x, y] = [path.resolve(a), path.resolve(b)];
+  return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
+
+function targetsConfig(input, home = os.homedir()) {
   if (!['Read', 'Edit', 'Write', 'NotebookEdit'].includes(input.tool_name)) return false;
-  const p = input.tool_input && input.tool_input.file_path;
-  return typeof p === 'string' && /[\\/]governor\.json$/.test(p);
+  const f = input.tool_input && input.tool_input.file_path;
+  if (typeof f !== 'string' || path.basename(f) !== 'governor.json') return false;
+  return input.tool_name === 'Read' || !samePath(f, userConfig(home));
 }
 
 function main() {
@@ -285,6 +309,36 @@ function selftest() {
   assert.ok(!targetsConfig({ tool_name: 'Bash', tool_input: { command: 'vi governor.json' } }), 'bash is never exempt');
   assert.ok(!targetsConfig({ tool_name: 'Edit', tool_input: { file_path: 'src/governor.json.bak' } }), 'only the config itself is exempt');
   assert.ok(!targetsConfig({ tool_name: 'Edit', tool_input: {} }), 'missing path is not exempt');
+
+  // At the ceiling there is nothing left to extend, and the message says so.
+  v = decide({ ...cfg, budget: 1000, ceiling: 1000 }, st, late + 4000);
+  assert.ok(/only the user can lift/.test(v.message), 'no self-extension offered at the ceiling');
+  v = decide({ ...cfg, budget: 1000, ceiling: 4000 }, st, late + 4000);
+  assert.ok(/headroom to 4k/.test(v.message), 'headroom named while under the ceiling');
+
+  // The ceiling belongs to the user file: a project config cannot raise its
+  // own hard stop, only lower it.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'governor-home-'));
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'governor-proj-'));
+  const userFile = path.join(home, '.claude', 'governor.json');
+  const projFile = path.join(proj, '.claude', 'governor.json');
+  fs.mkdirSync(path.dirname(userFile), { recursive: true });
+  fs.mkdirSync(path.dirname(projFile), { recursive: true });
+  fs.writeFileSync(userFile, JSON.stringify({ budget: 200000, ceiling: 300000 }));
+  fs.writeFileSync(projFile, JSON.stringify({ budget: 999999, ceiling: 999999 }));
+  let loaded = loadConfig(proj, home);
+  assert.strictEqual(loaded.ceiling, 300000, 'project cannot raise the ceiling');
+  assert.strictEqual(loaded.budget, 300000, 'budget clamped to the ceiling');
+  fs.writeFileSync(projFile, JSON.stringify({ budget: 50000 }));
+  assert.strictEqual(loadConfig(proj, home).budget, 50000, 'a smaller project budget is honoured');
+
+  // ...and the escape hatch stops at the same line: the user file stays
+  // readable while denied, but only the project file can be written.
+  assert.ok(targetsConfig({ tool_name: 'Read', tool_input: { file_path: userFile } }, home), 'user config stays readable');
+  assert.ok(!targetsConfig({ tool_name: 'Edit', tool_input: { file_path: userFile } }, home), 'user config is not writable while denied');
+  assert.ok(targetsConfig({ tool_name: 'Write', tool_input: { file_path: projFile } }, home), 'project config is the self-extension');
+  fs.rmSync(home, { recursive: true, force: true });
+  fs.rmSync(proj, { recursive: true, force: true });
 
   // Stale spend falls out of the window.
   assert.strictEqual(burnRate(fast, t0 + 10 * 60000, 5), 0, 'window expires');

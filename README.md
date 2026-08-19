@@ -12,7 +12,7 @@ they are what a runaway loop actually burns. Cache reads are ~0.1x and ignored.
 |---|---|---|
 | burn rate | 25k output tokens in 5 min | warn: check the approach is converging, replan smaller if not |
 | soft | 60% of budget | warn: prioritise what is left |
-| hard | 100% of budget (120k) | **deny** tool calls; the model can still talk to you |
+| hard | 100% of budget (200k) | **deny** tool calls; the model can still talk to you |
 
 Burn rate is checked first — spending fast is more urgent than spending a lot.
 Warnings do not repeat inside 10 minutes.
@@ -20,6 +20,17 @@ Warnings do not repeat inside 10 minutes.
 At the hard gate every tool call is denied, which is the point: it forces a stop
 and a replan rather than a quiet overrun. The model keeps its voice, so it can
 report what is done and what is left.
+
+Editing the config is the one thing a denied session may still do — otherwise
+the gate strands it with no way out. That doubles as the self-extension: the
+model can raise `budget` in the *project* config and carry on, up to `ceiling`.
+Past the ceiling nothing it can reach will move the line; only you can, in
+`~/.claude/governor.json`. So the budget is where a session should stop and
+check in, and the ceiling is where it stops for real.
+
+Defaults are drawn from ~390 real sessions: median spend 45k output tokens,
+p90 163k, p99 321k. A 200k budget interrupts the top ~6%; the 350k ceiling is
+past all but the very longest.
 
 ## Config
 
@@ -29,7 +40,8 @@ them. Project wins. Every field is optional.
 ```json
 {
   "enabled": true,
-  "budget": 120000,
+  "budget": 200000,
+  "ceiling": 350000,
   "softRatio": 0.6,
   "hardRatio": 1.0,
   "burnTokens": 25000,
@@ -38,10 +50,10 @@ them. Project wins. Every field is optional.
 }
 ```
 
-Raising `budget` mid-session takes effect on the next tool call — no restart.
+`ceiling` is read from the user config only — a project file cannot raise its
+own hard stop, only lower it. Raising `budget` mid-session takes effect on the
+next tool call — no restart.
 Off switches: `"enabled": false`, or `GOVERNOR_OFF=1` in the environment.
-
-## Install
 
 ## Skills
 

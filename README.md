@@ -71,8 +71,9 @@ decides *when the gate speaks*; whether it stops at all is yours.
 > `"hardRatio": 100` and the ceiling became decoration. Fixed in 0.4.0, with the
 > bypass pinned down by a test.
 
-**Cost: ~0 always-on tokens.** Hooks run outside the model's context. The only
-price is a node start (~50ms) per tool call.
+**The gate costs 0 always-on tokens.** Hooks run outside the model's context
+entirely; the only price is a node start (~50ms) per tool call. The two skills
+below add ~126 between them, which is the whole plugin's context cost.
 
 [Full documentation →](governor/README.md)
 

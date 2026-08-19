@@ -7,3 +7,6 @@ Thumbs.db
 claude-cheatsheet.html
 .playwright-mcp/
 _preview.html
+
+# local budget override, not for users
+.claude/governor.json

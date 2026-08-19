@@ -136,6 +136,15 @@ of the same name, so repo-specific rules go there.
 
 ---
 
+## Numbers
+
+[**BENCHMARK.md**](BENCHMARK.md) — a measured A/B rather than a claim. Four
+identical tasks run with and without `crew` routing (**68% cheaper**, every
+result verified by execution), `governor`'s gate replayed over **395 real
+sessions** (6.1% would have been stopped), and a blind routing test
+(**18/18**) — along with what the cheap tier missed, one hand-back that did not
+fire, and a gap where the budget cannot see subagent spend.
+
 ## Check it before you trust it
 
 Every executable here ships with a self-check. No framework, no fixtures — run

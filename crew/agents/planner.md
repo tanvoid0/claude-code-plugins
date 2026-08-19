@@ -1,6 +1,6 @@
 ---
 name: planner
-description: General planning. Single-subsystem features, refactors, bug-fix strategy, "how should I approach X". Read-only — returns a plan, never edits. Use when the shape of the work is clear but the steps are not.
+description: Single-subsystem planning: how should I approach X, refactor and bug-fix strategy. Read-only, returns a plan. Use when the shape of the work is clear but the steps are not.
 tools: Read, Grep, Glob, Bash
 model: opus
 ---

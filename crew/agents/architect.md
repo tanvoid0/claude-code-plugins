@@ -1,6 +1,6 @@
 ---
 name: architect
-description: Complex planning. Multi-file features, migrations, schema or wire-contract changes, anything spanning subsystems or where the tradeoff is not obvious. Read-only — returns a plan, never edits.
+description: Planning that spans subsystems: multi-file features, migrations, schema or wire-contract changes, non-obvious tradeoffs. Read-only, returns a plan.
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
 model: fable
 ---

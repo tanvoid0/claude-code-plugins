@@ -2,6 +2,19 @@
 
 ## governor
 
+### 0.5.0
+
+**`weighted` mode, off by default.** The gate counted output tokens on the
+grounds that they drive cost. Measured against real agent runs, that is true for
+a session that writes and false for one that reads: one benchmark turn emitted
+168 output tokens while reading 322,512 cached ones, and output was 1.2% of what
+that turn cost. Across four tool-heavy runs it was 5%.
+
+`"weighted": true` counts every token class at its price relative to output —
+input ×0.2, cache write ×0.25, cache read ×0.02 — so the budget tracks cost
+while keeping its unit. User-file-only, like `enabled` and `ceiling`.
+Switching modes restarts the session tally rather than mixing units.
+
 ### 0.4.0
 
 **Security.** Three ways out of the gate, closed.

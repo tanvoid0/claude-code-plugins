@@ -39,6 +39,7 @@ past all but the very longest.
 ```json
 {
   "enabled": true,
+  "weighted": false,
   "budget": 200000,
   "ceiling": 350000,
   "softRatio": 0.6,
@@ -51,6 +52,30 @@ past all but the very longest.
 
 `.claude/governor.json` in a project may then adjust **`budget`,
 `burnTokens`, `burnMinutes` and `rewarnMinutes`** — and nothing else.
+
+### `weighted`: count what the session actually costs
+
+Off by default, the gate counts output tokens only. That is the right metric for
+a session where the model is mostly writing, and the wrong one for a session
+that is mostly reading.
+
+The gap is not small. One measured turn from the [benchmark](../BENCHMARK.md):
+**168 output tokens against 322,512 cache reads**, costing $0.3562 — of which
+the output was $0.0042, or **1.2%**. Across four tool-heavy agent runs, output
+tokens accounted for 5% of the bill. A budget watching output alone barely
+moves while such a session spends freely.
+
+Set `"weighted": true` in the user config and every token class is counted at
+its price relative to output — input ×0.2, cache write ×0.25, cache read ×0.02,
+the opus ratios. The budget keeps its unit and its meaning: it is now
+*output-token equivalents*, and it tracks dollars. Weighted totals run far
+higher than unweighted ones on the same work, so raise `budget` when you turn
+it on rather than discovering the gate at 20%.
+
+Like `enabled` and `ceiling`, it is user-file-only — a project file switching
+the gate back to the metric that undercounts it would be a way out. Changing the
+mode restarts that session's tally, because adding weighted numbers to
+unweighted ones would produce a figure that means neither.
 
 That split is the whole design, so it is worth being blunt about why. A denied
 session is still allowed to edit the project file; that is the escape hatch

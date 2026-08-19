@@ -1,6 +1,6 @@
 ---
 name: quick
-description: Small mechanical tasks with a known target. Typo fixes, copy tweaks, a value change, a mechanical rename, reading a config value, running a check, one pinpoint lookup you can already name. Refuses anything needing judgement, spanning three or more files, or requiring a search to find the target.
+description: Mechanical edits with the target already named: typo, copy tweak, value change, rename, run a check. Refuses judgement calls, 3+ files, or anything needing a search first.
 tools: Read, Edit, Grep, Glob, Bash
 model: haiku
 ---

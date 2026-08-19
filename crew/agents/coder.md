@@ -1,6 +1,6 @@
 ---
 name: coder
-description: Implementation. Writes and edits code against an agreed plan or a clear task. Use for feature work, refactors and bug fixes once the approach is settled.
+description: Writes and edits code against a settled plan or a clear task: feature work, refactors, bug fixes.
 tools: Read, Edit, Write, Grep, Glob, Bash
 model: sonnet
 ---

@@ -20,6 +20,11 @@ const DEFAULTS = {
   // The model may raise `budget` mid-session (config edits are never blocked),
   // but never past `ceiling` — that one is the user's, from ~/.claude only.
   ceiling: 350000,
+  // Output tokens alone undercount tool-heavy work badly: a turn can read
+  // 300k cached tokens and emit 168. Weighted mode counts every token class at
+  // its price relative to output, so the budget tracks cost instead. Same unit
+  // either way -- the budget is output-token equivalents.
+  weighted: false,
   softRatio: 0.6,        // warn once at 60% of budget
   hardRatio: 1.0,        // deny tool calls at 100%
   burnTokens: 25000,     // ...or if this many output tokens land
@@ -31,6 +36,20 @@ const DEFAULTS = {
 // is world-writable, so a predictable path there lets any other local user
 // read, poison or symlink the tally.
 const STATE_DIR = path.join(os.homedir(), '.claude', 'governor-state');
+
+// Opus rates, relative to output: input 5/25, cache write 6.25/25, cache read
+// 0.5/25. The cheapest class still counts, because there is usually 1000x more
+// of it than there is output.
+const WEIGHTS = { input: 0.2, cacheWrite: 0.25, cacheRead: 0.02 };
+
+function weigh(u, weighted) {
+  const out = u.output_tokens || 0;
+  if (!weighted) return out;
+  return out
+    + WEIGHTS.input * (u.input_tokens || 0)
+    + WEIGHTS.cacheWrite * (u.cache_creation_input_tokens || 0)
+    + WEIGHTS.cacheRead * (u.cache_read_input_tokens || 0);
+}
 
 // The first call after a resume can face a very large transcript. Read at most
 // this much per invocation and let the next call catch up, rather than pulling
@@ -80,7 +99,7 @@ function loadConfig(cwd, home = os.homedir()) {
 }
 
 function freshState() {
-  return { offset: 0, output: 0, window: [], seen: [], softWarnedAt: 0, burnWarnedAt: 0 };
+  return { offset: 0, output: 0, window: [], seen: [], softWarnedAt: 0, burnWarnedAt: 0, weighted: false };
 }
 
 // The state file is input, not memory: it outlives the process and sits on
@@ -101,6 +120,7 @@ function loadState(sessionId) {
       seen: Array.isArray(s.seen) ? s.seen.filter((id) => typeof id === 'string') : [],
       softWarnedAt: num(s.softWarnedAt),
       burnWarnedAt: num(s.burnWarnedAt),
+      weighted: !!s.weighted,
     };
   } catch { /* absent, unreadable or malformed: first call this session */ }
   return freshState();
@@ -123,7 +143,7 @@ function saveState(sessionId, state) {
 }
 
 // Reads whatever is new in the transcript and folds it into state.
-function tally(transcriptPath, state, now) {
+function tally(transcriptPath, state, now, weighted) {
   let fd;
   try {
     fd = fs.openSync(transcriptPath, 'r');
@@ -164,7 +184,7 @@ function tally(transcriptPath, state, now) {
         if (seen.has(id)) continue;
         seen.add(id);
       }
-      const out = usage.output_tokens || 0;
+      const out = weigh(usage, weighted);
       if (!out) continue;
       state.output += out;
       const at = Date.parse(entry.timestamp || '') || now;
@@ -187,7 +207,9 @@ function burnRate(state, now, minutes) {
 }
 
 function fmt(n) {
-  return n >= 1000 ? Math.round(n / 1000) + 'k' : String(n);
+  // Weighted tallies are fractional; nobody wants to read 131847.4.
+  const v = Math.round(n);
+  return v >= 1000 ? Math.round(v / 1000) + 'k' : String(v);
 }
 
 function decide(cfg, state, now) {
@@ -272,7 +294,14 @@ function main() {
   if (!cfg.enabled) return;
 
   const now = Date.now();
-  const state = tally(input.transcript_path, loadState(input.session_id), now);
+  const prior = loadState(input.session_id);
+  // Switching modes mid-session would add weighted numbers to unweighted ones.
+  // Start the tally over instead of reporting a figure that means neither.
+  if (!!prior.weighted !== !!cfg.weighted) {
+    Object.assign(prior, freshState());
+  }
+  prior.weighted = !!cfg.weighted;
+  const state = tally(input.transcript_path, prior, now, cfg.weighted);
   const verdict = decide(cfg, state, now);
   saveState(input.session_id, state);
   if (!verdict) return;
@@ -418,6 +447,42 @@ function selftest() {
   for (const id of ['../../evil', 'a/b', 'C:\\Windows\\x', '..', '']) {
     assert.strictEqual(path.dirname(statePath(id)), STATE_DIR, 'state stays in its directory: ' + id);
   }
+
+  // Weighted mode: a turn that emits almost nothing but reads a huge cache is
+  // expensive, and unweighted counting cannot see it. Measured from the
+  // benchmark: 168 output tokens against 322,512 cache reads cost $0.3562, of
+  // which output was $0.0042 -- 1.2%.
+  const heavy = { output_tokens: 168, input_tokens: 14, cache_creation_input_tokens: 30503, cache_read_input_tokens: 322512 };
+  assert.strictEqual(weigh(heavy, false), 168, 'unweighted sees only output');
+  const w = weigh(heavy, true);
+  assert.ok(w > 14000 && w < 14500, 'weighted sees the cache reads, got ' + w);
+  // The weights are the opus price ratios, so weighted tokens track dollars.
+  const dollars = (14 * 5 + 168 * 25 + 30503 * 6.25 + 322512 * 0.5) / 1e6;
+  assert.ok(Math.abs((w / 1e6) * 25 - dollars) < 1e-9, 'weighted total is cost-proportional');
+
+  const wfile = path.join(dir, 'w.jsonl');
+  fs.writeFileSync(wfile, JSON.stringify({ uuid: 'w1', timestamp: new Date(t0).toISOString(), message: { id: 'w1', usage: heavy } }) + '\n');
+  const unw = tally(wfile, freshState(), t0, false);
+  assert.strictEqual(unw.output, 168, 'unweighted tally unchanged by the new path');
+  const wt = tally(wfile, freshState(), t0, true);
+  assert.ok(wt.output > 13000, 'weighted tally counts the whole turn');
+
+  // A turn with zero output still counts when weighted.
+  const noOut = { output_tokens: 0, cache_read_input_tokens: 500000 };
+  assert.strictEqual(weigh(noOut, false), 0, 'zero-output turn is invisible unweighted');
+  assert.strictEqual(weigh(noOut, true), 10000, 'zero-output turn still costs, weighted');
+
+  // Mode is user-file-only: a project file cannot quietly switch the gate back
+  // to the metric that undercounts it.
+  fs.mkdirSync(path.join(proj, '.claude'), { recursive: true });
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'governor.json'), JSON.stringify({ weighted: true, ceiling: 300000 }));
+  fs.writeFileSync(path.join(proj, '.claude', 'governor.json'), JSON.stringify({ weighted: false }));
+  assert.strictEqual(loadConfig(proj, home).weighted, true, 'project cannot turn weighting off');
+
+  // Fractional weighted totals print as whole numbers.
+  assert.strictEqual(fmt(131847.4), '132k', 'weighted totals round');
+  assert.strictEqual(fmt(12.6), '13', 'small weighted totals round');
 
   // Stale spend falls out of the window.
   assert.strictEqual(burnRate(fast, t0 + 10 * 60000, 5), 0, 'window expires');

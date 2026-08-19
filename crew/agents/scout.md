@@ -1,6 +1,6 @@
 ---
 name: scout
-description: Broad read-only search. "Where does X happen", "what would this change touch", "map the flow from A to B", sweeps across many files or naming conventions. Returns a file:line map and a conclusion, never a fix. Use before planning or editing anything you cannot already point at.
+description: Read-only search: where does X live, what would this change touch, map the flow from A to B. Returns a file:line map, never a fix. Use before planning or editing anything you cannot already point at.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---

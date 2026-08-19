@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Code review for changes with real logic in them — a branch, a loop, a parser, a money or security path, a new seam, or three or more files. Reports correctness bugs, CLAUDE.md violations and over-engineering. Read-only, never fixes. Not for copy changes, renames or config tweaks; typecheck already covers those.
+description: Reviews changes with real logic in them: a branch, a loop, a parser, a money or security path, or 3+ files. Reports correctness bugs and over-engineering. Read-only. Not for renames or config tweaks.
 tools: Read, Grep, Glob, Bash
 model: opus
 ---

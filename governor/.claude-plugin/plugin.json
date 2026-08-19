@@ -1,6 +1,6 @@
 {
   "name": "governor",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Token budget gate. Tallies output tokens off the session transcript, warns when spend or burn rate runs hot, and blocks tool calls once the budget is gone — which a session may extend itself, up to a ceiling only the user can lift. Adds skills to audit plugin cost and search the public plugin catalog.",
   "author": {
     "name": "Tanveer Hoque"

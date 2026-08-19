@@ -23,12 +23,12 @@ repo-specific rules there.
 ## Install
 
 ```bash
-claude plugin marketplace add D:/production/ai/plugins/crew
+claude plugin marketplace add tanvoid0/claude-code-plugins
 ```
 
 ```bash
-claude plugin install crew@crew
+claude plugin install crew@tan
 ```
 
-Then delete `~/.claude/agents/*.md` if you installed those first, or the two
-copies drift.
+If you already have agents of the same name in `~/.claude/agents/`, remove those
+files — otherwise you are maintaining two copies that will drift.

@@ -7,7 +7,8 @@ description: Search the awesomeclaudeplugins.com catalog for third-party Claude 
 
 Check the built-ins first. `SearchPlugins` and `SearchSkills` cover the user's
 own catalog and are cheaper and already vetted. Use this skill for the wider
-public catalog (~33k GitHub repos), or when those return nothing.
+public catalog (~88k plugins across ~33k GitHub repos), or when those return
+nothing.
 
 Run `find.js`, which sits next to this SKILL.md. Use the absolute path of this
 skill's directory — `$CLAUDE_PLUGIN_ROOT` is only set for hooks, not in the

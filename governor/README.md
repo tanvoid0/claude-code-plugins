@@ -71,18 +71,21 @@ Two on-demand skills, ~126 tokens always-on between them.
 - **`plugin-audit`** — what every installed plugin costs in always-on context,
   sorted, with the `disable` commands. Shells out to `claude plugin list` and
   `claude plugin details`.
-- **`find-plugin`** — searches the awesomeclaudeplugins.com catalog (~33k repos)
-  and prints install commands. It never installs: a plugin's hooks run on this
-  machine at every session start, so that stays a human decision.
+- **`find-plugin`** — searches the awesomeclaudeplugins.com catalog (~88k
+  plugins) and prints install commands. It never installs: a plugin's hooks run
+  on this machine at every session start, so that stays a human decision. The
+  catalog is a third party, so what it returns is treated as untrusted — repo
+  slugs are allowlisted before they are printed inside a command you might
+  paste, and control characters are stripped from descriptions.
 
 ## Install
 
 ```bash
-claude plugin marketplace add D:/production/ai/plugins/governor
+claude plugin marketplace add tanvoid0/claude-code-plugins
 ```
 
 ```bash
-claude plugin install governor@governor
+claude plugin install governor@tan
 ```
 
 ## Check

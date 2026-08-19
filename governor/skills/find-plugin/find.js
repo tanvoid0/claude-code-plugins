@@ -83,7 +83,14 @@ async function main() {
     return;
   }
 
-  console.log(`Top ${Math.min(limit, repos.length)} for "${query}" (catalog holds ${data.pluginsCount ?? '?'} plugins):\n`);
+  // pluginsCount is how many matched, not how big the catalog is.
+  const matches = typeof data.pluginsCount === 'number' ? data.pluginsCount : repos.length;
+  const shown = Math.min(limit, repos.length);
+  console.log(
+    shown >= matches
+      ? `All ${matches} match${matches === 1 ? '' : 'es'} for "${query}":\n`
+      : `Top ${shown} of ${matches} matches for "${query}":\n`,
+  );
   console.log(format(repos, limit));
   console.log(
     '\nUnvetted third-party code. Read the repo before installing: a plugin\n' +

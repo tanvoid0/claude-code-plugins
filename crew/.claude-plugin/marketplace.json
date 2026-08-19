@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "crew",
+  "description": "Role-and-model routing for Claude Code subagents.",
+  "owner": {
+    "name": "Tanveer Hoque"
+  },
+  "plugins": [
+    {
+      "name": "crew",
+      "description": "Six subagents, each pinned to the cheapest model that holds for its job.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

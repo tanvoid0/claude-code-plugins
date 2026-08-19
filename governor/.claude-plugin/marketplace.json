@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "governor",
+  "description": "Resource gates for Claude Code sessions.",
+  "owner": {
+    "name": "Tanveer Hoque"
+  },
+  "plugins": [
+    {
+      "name": "governor",
+      "description": "Token budget and burn-rate gate on every tool call.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

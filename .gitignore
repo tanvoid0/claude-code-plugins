@@ -1,0 +1,7 @@
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+
+# personal, not part of the marketplace
+claude-cheatsheet.html

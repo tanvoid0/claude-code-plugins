@@ -1,0 +1,25 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "tan",
+  "description": "Plugins that decide what a Claude Code session is allowed to spend, and who does the work.",
+  "owner": {
+    "name": "Tanveer Hoque",
+    "url": "https://github.com/tanvoid0"
+  },
+  "plugins": [
+    {
+      "name": "governor",
+      "source": "./governor",
+      "description": "A token budget on every tool call. Warns when a session runs hot, stops it when the budget is gone, and holds a ceiling only you can lift.",
+      "category": "productivity",
+      "keywords": ["tokens", "budget", "cost", "hooks", "runaway", "limits"]
+    },
+    {
+      "name": "crew",
+      "source": "./crew",
+      "description": "Six subagents, each pinned to the cheapest model that holds for its job.",
+      "category": "productivity",
+      "keywords": ["subagents", "agents", "routing", "models", "cost"]
+    }
+  ]
+}

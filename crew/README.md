@@ -27,7 +27,7 @@ claude plugin marketplace add tanvoid0/claude-code-plugins
 ```
 
 ```bash
-claude plugin install crew@tan
+claude plugin install crew@tanvoid0
 ```
 
 If you already have agents of the same name in `~/.claude/agents/`, remove those

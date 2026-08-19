@@ -1,6 +1,6 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "tan",
+  "name": "tanvoid0",
   "description": "Plugins that decide what a Claude Code session is allowed to spend, and who does the work.",
   "owner": {
     "name": "Tanveer Hoque",

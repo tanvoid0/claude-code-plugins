@@ -10,11 +10,11 @@ claude plugin marketplace add tanvoid0/claude-code-plugins
 ```
 
 ```bash
-claude plugin install governor@tan
+claude plugin install governor@tanvoid0
 ```
 
 ```bash
-claude plugin install crew@tan
+claude plugin install crew@tanvoid0
 ```
 
 ---

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="558" height="532" viewBox="0 0 558 532" role="img" aria-label="Claude Code session showing governor warning at 27k tokens burned, again at 66% of budget, then denying tool calls at 201k of 200k.">
+  <rect x="0.5" y="0.5" width="557" height="531" rx="8" fill="#0d1117" stroke="#30363d"/>
+  <path d="M0.5 8.5a8 8 0 0 1 8-8h541a8 8 0 0 1 8 8v26h-557z" fill="#161b22"/>
+  <line x1="0.5" y1="34.5" x2="557.5" y2="34.5" stroke="#30363d"/>
+  <circle cx="18" cy="17" r="5" fill="#ff5f57"/>
+  <circle cx="36" cy="17" r="5" fill="#febc2e"/>
+  <circle cx="54" cy="17" r="5" fill="#28c840"/>
+  <text x="279" y="21" fill="#7d8590" font-size="12" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">claude — governor</text>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" xml:space="preserve">
+    <text y="65" xml:space="preserve"><tspan x="22" fill="#3fb950">$ </tspan><tspan fill="#c9d1d9">claude</tspan></text>
+    <text y="86" xml:space="preserve"><tspan x="22" fill="#c9d1d9"></tspan></text>
+    <text y="107" xml:space="preserve"><tspan x="22" fill="#7d8590">⏺ </tspan><tspan fill="#c9d1d9">Refactoring the payment path. Running the suite again…</tspan></text>
+    <text y="128" xml:space="preserve"><tspan x="22" fill="#c9d1d9"></tspan></text>
+    <text y="149" xml:space="preserve"><tspan x="22" fill="#d29922">  governor: </tspan><tspan fill="#c9d1d9">Burn rate: 27k output tokens in the last 5</tspan></text>
+    <text y="170" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  minutes (27k of 200k used). Before the next expensive step,</tspan></text>
+    <text y="191" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  check the current approach is converging. If it is looping or</tspan></text>
+    <text y="212" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  fanning out wider than the task needs, replan smaller instead</tspan></text>
+    <text y="233" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  of pushing on.</tspan></text>
+    <text y="254" xml:space="preserve"><tspan x="22" fill="#c9d1d9"></tspan></text>
+    <text y="275" xml:space="preserve"><tspan x="22" fill="#d29922">  governor: </tspan><tspan fill="#c9d1d9">131k of 200k output tokens used (66%).</tspan></text>
+    <text y="296" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  Tool calls stop at 200k. Prioritise what remains.</tspan></text>
+    <text y="317" xml:space="preserve"><tspan x="22" fill="#c9d1d9"></tspan></text>
+    <text y="338" xml:space="preserve"><tspan x="22" fill="#f85149">  governor: </tspan><tspan fill="#c9d1d9">Token budget spent: 201k of 200k output</tspan></text>
+    <text y="359" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  tokens. </tspan><tspan fill="#f85149">Tool calls are blocked.</tspan><tspan fill="#c9d1d9"> Summarise for the user what</tspan></text>
+    <text y="380" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  is done and what is left. If the remaining work genuinely needs</tspan></text>
+    <text y="401" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  it, say so in chat and raise "budget" in .claude/governor.json</tspan></text>
+    <text y="422" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  (headroom to 350k, the ceiling only the user can lift). Do not</tspan></text>
+    <text y="443" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  raise it to keep a loop going.</tspan></text>
+    <text y="464" xml:space="preserve"><tspan x="22" fill="#c9d1d9"></tspan></text>
+    <text y="485" xml:space="preserve"><tspan x="22" fill="#7d8590">⏺ </tspan><tspan fill="#c9d1d9">I have hit the budget. Done: the charge path is migrated</tspan></text>
+    <text y="506" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  and green. Left: refunds, and the webhook retry test.</tspan></text>
+  </g>
+</svg>

@@ -5,3 +5,5 @@ Thumbs.db
 
 # personal, not part of the marketplace
 claude-cheatsheet.html
+.playwright-mcp/
+_preview.html

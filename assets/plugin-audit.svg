@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="526" height="469" viewBox="0 0 526 469" role="img" aria-label="plugin-audit output: a table of installed plugins sorted by always-on token cost, totalling 1643 tokens per session, with disable commands for the two biggest.">
+  <rect x="0.5" y="0.5" width="525" height="468" rx="8" fill="#0d1117" stroke="#30363d"/>
+  <path d="M0.5 8.5a8 8 0 0 1 8-8h509a8 8 0 0 1 8 8v26h-525z" fill="#161b22"/>
+  <line x1="0.5" y1="34.5" x2="525.5" y2="34.5" stroke="#30363d"/>
+  <circle cx="18" cy="17" r="5" fill="#ff5f57"/>
+  <circle cx="36" cy="17" r="5" fill="#febc2e"/>
+  <circle cx="54" cy="17" r="5" fill="#28c840"/>
+  <text x="263" y="21" fill="#7d8590" font-size="12" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">claude — /plugin-audit</text>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" xml:space="preserve">
+    <text y="65" xml:space="preserve"><tspan x="22" fill="#3fb950">$ </tspan><tspan fill="#c9d1d9">node audit.js</tspan></text>
+    <text y="86" xml:space="preserve"><tspan x="22" fill="#c9d1d9"></tspan></text>
+    <text y="107" xml:space="preserve"><tspan x="22" fill="#7d8590">always-on  plugin              components</tspan></text>
+    <text y="128" xml:space="preserve"><tspan x="22" fill="#f85149">~853 tok   </tspan><tspan fill="#c9d1d9">caveman             7 skills, 3 agents, 2 hooks</tspan></text>
+    <text y="149" xml:space="preserve"><tspan x="22" fill="#f85149">~676 tok   </tspan><tspan fill="#c9d1d9">ponytail            6 skills, 3 hooks</tspan></text>
+    <text y="170" xml:space="preserve"><tspan x="22" fill="#d29922">~114 tok   </tspan><tspan fill="#c9d1d9">context7            2 skills, 1 agents, 1 mcp</tspan></text>
+    <text y="191" xml:space="preserve"><tspan x="22" fill="#3fb950">~0 tok     </tspan><tspan fill="#c9d1d9">claude-hud          none</tspan></text>
+    <text y="212" xml:space="preserve"><tspan x="22" fill="#3fb950">~0 tok     </tspan><tspan fill="#c9d1d9">playwright          1 mcp</tspan></text>
+    <text y="233" xml:space="preserve"><tspan x="22" fill="#7d8590">----------------------------------------------------</tspan></text>
+    <text y="254" xml:space="preserve"><tspan x="22" fill="#58a6ff">~1643 tok  </tspan><tspan fill="#c9d1d9">total, every session, every project</tspan></text>
+    <text y="275" xml:space="preserve"><tspan x="22" fill="#c9d1d9"></tspan></text>
+    <text y="296" xml:space="preserve"><tspan x="22" fill="#7d8590">disabled (costing nothing): claude-mem, headroom, vercel</tspan></text>
+    <text y="317" xml:space="preserve"><tspan x="22" fill="#c9d1d9"></tspan></text>
+    <text y="338" xml:space="preserve"><tspan x="22" fill="#c9d1d9">Biggest payers — disable any you do not use in most sessions:</tspan></text>
+    <text y="359" xml:space="preserve"><tspan x="22" fill="#bc8cff">  claude plugin disable caveman   # ~853 tok</tspan></text>
+    <text y="380" xml:space="preserve"><tspan x="22" fill="#bc8cff">  claude plugin disable ponytail  # ~676 tok</tspan></text>
+    <text y="401" xml:space="preserve"><tspan x="22" fill="#c9d1d9"></tspan></text>
+    <text y="422" xml:space="preserve"><tspan x="22" fill="#7d8590">Hooks and MCP servers cost ~0 always-on: hooks run outside</tspan></text>
+    <text y="443" xml:space="preserve"><tspan x="22" fill="#7d8590">context and MCP tool schemas load on demand.</tspan></text>
+  </g>
+</svg>

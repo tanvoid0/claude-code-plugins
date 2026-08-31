@@ -12,14 +12,42 @@
       "source": "./governor",
       "description": "A token budget on every tool call. Warns when a session runs hot, stops it when the budget is gone, and holds a ceiling only you can lift.",
       "category": "productivity",
-      "keywords": ["tokens", "budget", "cost", "hooks", "runaway", "limits"]
+      "keywords": [
+        "tokens",
+        "budget",
+        "cost",
+        "hooks",
+        "runaway",
+        "limits"
+      ]
     },
     {
       "name": "crew",
       "source": "./crew",
       "description": "Six subagents, each pinned to the cheapest model that holds for its job.",
       "category": "productivity",
-      "keywords": ["subagents", "agents", "routing", "models", "cost"]
+      "keywords": [
+        "subagents",
+        "agents",
+        "routing",
+        "models",
+        "cost"
+      ]
+    },
+    {
+      "name": "hands",
+      "source": "./hands",
+      "description": "Start, stop and look at the app in front of you. Detects the stack once and caches it.",
+      "category": "productivity",
+      "keywords": [
+        "dev-server",
+        "ports",
+        "processes",
+        "screenshot",
+        "tauri",
+        "nextjs",
+        "fastapi"
+      ]
     }
   ]
 }

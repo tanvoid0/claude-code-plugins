@@ -1,0 +1,8 @@
+{
+  "name": "hands",
+  "version": "0.4.0",
+  "description": "Start, stop and look at the app in front of you. Detects the stack once, caches it, and stops re-deriving how to run the project in every session.",
+  "author": {
+    "name": "Tanveer Hoque"
+  }
+}

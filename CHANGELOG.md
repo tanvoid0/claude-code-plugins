@@ -69,6 +69,18 @@ Token budget and burn-rate gate. `plugin-audit` and `find-plugin` skills.
 
 ## crew
 
+### 0.1.1
+
+**Skill-aware.** Each agent that can act on one now carries the `Skill` tool and
+invokes the skills its job turns on: `coder` and `quick` run the
+`ponytail:ponytail` ladder before editing and pull in a design skill
+(`make-interfaces-feel-better`, `emil-design-eng`, `apple-design`, `animate`,
+`dataviz`) when the change touches UI, motion or charts; `planner` holds the
+plan to the ponytail ladder and the same design skills; `architect` reaches for
+`dataviz` and the design skills when a cross-subsystem plan lands in the UI;
+`reviewer` runs `code-review`, `security-review` and `break-ui`. `scout` is left
+alone — a read-only locator has no skill to lean on.
+
 ### 0.1.0
 
 Six subagents, each pinned to the cheapest model that holds for its job: `quick`

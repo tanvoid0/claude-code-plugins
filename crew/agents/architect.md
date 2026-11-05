@@ -1,7 +1,7 @@
 ---
 name: architect
 description: Planning that spans subsystems: multi-file features, migrations, schema or wire-contract changes, non-obvious tradeoffs. Read-only, returns a plan.
-tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, Skill
+tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, Skill, mcp__plugin_crew_portal__add, mcp__plugin_crew_portal__update
 model: fable
 ---
 
@@ -30,3 +30,11 @@ anything that crosses a process or language boundary.
 Return: the plan as ordered steps, the files each step touches, the risks, and
 one runnable check that fails if the change is wrong. No code beyond short
 illustrative snippets.
+
+## Board
+
+If your brief names a board task (`#id`), put the plan on it with the portal
+`add` tool — one `Subtask` per step, `parent_id` the task, assignee the
+agent that should do it — then one `update` note, `by: "architect"`, with the
+approach in a sentence. Still return the full plan. No task id in the brief →
+skip the board.

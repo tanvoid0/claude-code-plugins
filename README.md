@@ -132,6 +132,11 @@ The bodies are repo-agnostic: they defer to whatever `CLAUDE.md` the project
 supplies. A project's own `.claude/agents/<name>.md` overrides the plugin file
 of the same name, so repo-specific rules go there.
 
+The crew reports to a board: Portal's task list, through a bundled `portal` MCP
+server. `/crew:work` has a session claim the top task on its project's board and
+work it through the agents; `/crew:standup` tells you what is waiting on you,
+what is in progress and what broke, across every project.
+
 [Full documentation →](crew/README.md)
 
 ---

@@ -1,7 +1,7 @@
 {
   "name": "crew",
-  "version": "0.1.1",
-  "description": "Six subagents, each pinned to the cheapest model that holds for its job: quick (haiku), scout and coder (sonnet), planner and reviewer (opus), architect (fable).",
+  "version": "0.2.0",
+  "description": "Six subagents, each pinned to the cheapest model that holds for its job, reporting to a Portal task board over a bundled MCP server: /crew:work claims and works a task, /crew:standup reads the board back.",
   "author": {
     "name": "Tanveer Hoque"
   }

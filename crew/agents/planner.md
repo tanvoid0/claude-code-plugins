@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Single-subsystem planning: how should I approach X, refactor and bug-fix strategy. Read-only, returns a plan. Use when the shape of the work is clear but the steps are not.
-tools: Read, Grep, Glob, Bash, Skill
+tools: Read, Grep, Glob, Bash, Skill, mcp__plugin_crew_portal__add, mcp__plugin_crew_portal__update
 model: opus
 ---
 
@@ -22,3 +22,11 @@ Return: ordered steps, files touched per step, and one runnable check that
 fails if the change is wrong. If the task turns out to span subsystems or
 contradict a `CLAUDE.md` rule, say so and recommend escalating to `architect`
 rather than planning around it.
+
+## Board
+
+If your brief names a board task (`#id`), put the plan on it with the portal
+`add` tool — one `Subtask` per step, `parent_id` the task, assignee the
+agent that should do it — then one `update` note, `by: "planner"`, with the
+approach in a sentence. Still return the full plan. No task id in the brief →
+skip the board.

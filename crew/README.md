@@ -20,6 +20,41 @@ supplies for commands and conventions. A project's own
 `.claude/agents/<name>.md` overrides the plugin file of the same name — put
 repo-specific rules there.
 
+## Board
+
+The crew reports to Portal's task list, so you can see what is going on without
+reading transcripts. A bundled MCP server (`mcp/portal.js`, Node 22+, no
+dependencies) calls the daemon Portal runs on `127.0.0.1:18420`; set
+`PORTAL_URL` to point elsewhere. Portal has to be running — the tools say so
+plainly when it is not.
+
+| tool | does |
+|---|---|
+| `projects` | Portal projects, filtered by name or path. |
+| `tasks` | One project's board, or every project's with `project: "*"`. |
+| `task` | One task: description, plan steps, progress log. |
+| `add` | New item. `Bug` to raise an issue, `Subtask` + `parent_id` for a plan step. |
+| `update` | Change status / assignee / priority, and append a progress note. |
+
+`project` takes an id, a name, or a path — the deepest registered project that
+contains the path wins. A progress note is a completed `Subtask` tagged `note`
+under its task, so Portal's Tasks page shows the log as is.
+
+Conventions the agents follow: assignee is whoever owns it (`claude`, `coder`,
+…); `owner` means it is waiting on you, with a `BLOCKED:` note saying what for.
+Brief an agent with `board task #<id>` and `coder`, `planner`, `architect` and
+`reviewer` log their own milestone on it and raise out-of-scope problems as
+`Bug`s.
+
+| command | does |
+|---|---|
+| `/crew:work [id \| title]` | Claim the top open task (or the one named), route it through the crew, log milestones, close it. One task per run. |
+| `/crew:standup [project]` | Waiting on you, in progress, open bugs, done this week. Offers one `/crew:work` session per project with queued work. |
+
+Run one `/crew:work` session per project to have several employees at once.
+
+`node mcp/portal.js --selftest` checks project resolution without Portal.
+
 ## Install
 
 ```bash

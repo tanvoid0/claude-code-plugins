@@ -69,6 +69,24 @@ Token budget and burn-rate gate. `plugin-audit` and `find-plugin` skills.
 
 ## crew
 
+### 0.2.0
+
+**A board.** The crew now reports to Portal's task list through a bundled
+`portal` MCP server (`crew/mcp/portal.js`, Node, no dependencies), which calls
+the Portal daemon on `127.0.0.1:18420` — loopback is trusted, so no token. Five
+tools: `projects`, `tasks`, `task`, `add`, `update`. Items link to their Portal
+project and carry its name as a tag; a progress note is a completed `Subtask`
+tagged `note`, so the existing Tasks page shows the log with no Portal change.
+A repo path resolves to the deepest registered project containing it, matching
+on trailing segments so a database written on another OS still finds it.
+
+`/crew:work` claims the top open task, routes it through the crew, logs
+milestones and closes it — one task per run, one session per project.
+`/crew:standup` reads the board back: waiting on you, in progress, open bugs,
+done this week. `coder`, `planner`, `architect` and `reviewer` log their own
+milestone when their brief names a task, and raise what they find out of scope
+as a `Bug`. Blocked on the developer means assignee `owner`.
+
 ### 0.1.1
 
 **Skill-aware.** Each agent that can act on one now carries the `Skill` tool and

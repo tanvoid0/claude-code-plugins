@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Reviews changes with real logic in them: a branch, a loop, a parser, a money or security path, or 3+ files. Reports correctness bugs and over-engineering. Read-only. Not for renames or config tweaks.
-tools: Read, Grep, Glob, Bash, Skill
+tools: Read, Grep, Glob, Bash, Skill, mcp__plugin_crew_portal__add, mcp__plugin_crew_portal__update
 model: opus
 ---
 
@@ -44,3 +44,11 @@ Two ways to finish early, both correct:
   config value. Say "trivial, typecheck covers it" and stop. Being called on
   something too small is a routing miss, and the cheap fix is to name it rather
   than to review it anyway.
+
+## Board
+
+If your brief names a board task (`#id`), add one `update` note to it with the
+portal tool, `by: "reviewer"`: the verdict — clean, or how many findings and
+the worst severity. A real problem outside the diff under review goes on the
+board with `add` as a `Bug` instead of into your findings. No task id in the
+brief → skip the board.

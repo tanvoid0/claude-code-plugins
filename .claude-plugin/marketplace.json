@@ -24,14 +24,17 @@
     {
       "name": "crew",
       "source": "./crew",
-      "description": "Six subagents, each pinned to the cheapest model that holds for its job.",
+      "description": "Six subagents, each pinned to the cheapest model that holds for its job, reporting progress and issues to a Portal task board.",
       "category": "productivity",
       "keywords": [
         "subagents",
         "agents",
         "routing",
         "models",
-        "cost"
+        "cost",
+        "mcp",
+        "board",
+        "tasks"
       ]
     },
     {

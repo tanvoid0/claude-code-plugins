@@ -1,0 +1,40 @@
+{
+  "product": {
+    "tagline": "Two Claude Code plugins: a token budget the agent cannot switch off, and six subagents that send each task to the cheapest model that can do it.",
+    "summary": "Governor watches what a Claude Code session spends and warns, then stops tool calls, before a runaway loop runs up the bill. Crew gives you six subagents, each pinned to one model tier, so a rename goes to Haiku and a migration plan goes to Opus. Both are MIT licensed, use only the Node standard library, and send nothing off your machine.",
+    "features": [
+      {
+        "title": "A budget that speaks up early",
+        "detail": "Three gates on every tool call: a warning when spending gets fast, another at 60% of the budget, and a hard stop at 100% that tells the model to summarise what is done and what is left."
+      },
+      {
+        "title": "A limit the agent cannot lift",
+        "detail": "A project can tune its budget, but the ceiling and the off switch live in your home config, so a model at the wall cannot let itself out."
+      },
+      {
+        "title": "Six agents, one model each",
+        "detail": "quick on Haiku, scout and coder on Sonnet, planner and reviewer on Opus, architect on Fable. An agent handed work below its tier names the right one and hands back."
+      },
+      {
+        "title": "Measured, not promised",
+        "detail": "Four identical tasks cost 68% less routed through crew, every result checked by running it. Replayed over 395 real sessions, the gate would have stopped 6.1%."
+      },
+      {
+        "title": "See what your plugins cost",
+        "detail": "plugin-audit ranks every installed plugin by the context it adds to every session, and says so when nothing is worth cutting."
+      },
+      {
+        "title": "Find plugins, install on purpose",
+        "detail": "find-plugin searches a public catalogue of about 88,000 plugins and prints the install command. It never runs it for you."
+      },
+      {
+        "title": "Nothing leaves your machine",
+        "detail": "No telemetry, no dependencies and no network calls, except find-plugin when you run it. Every script ships a self-test you can run yourself."
+      }
+    ],
+    "platforms": [
+      "Claude Code",
+      "Windows, macOS and Linux"
+    ]
+  }
+}

@@ -274,12 +274,20 @@ function kindOf(command, stack) {
   return 'web';
 }
 
-function load(root, name) {
+function load(root, name, dir) {
   const f = json(launchPath(root));
   const list = (f && Array.isArray(f.configurations) && f.configurations) || [];
   const c = name ? list.find((x) => x.name === name) : list[0];
   if (!c) return null;
   const command = [c.runtimeExecutable, ...(c.runtimeArgs || [])].join(' ');
+  // launch.json is shared with the harness, so an entry here may have been
+  // written by hand or by another tool rather than cached by us. One case is
+  // worth re-deriving: a repo with src-tauri whose entry does not run tauri.
+  // `pnpm dev` there starts the frontend and leaves the application unbuilt,
+  // and the entry reports `web`, so /shot points a browser at half the app.
+  // This is the same rule detection already applies - tauri outranks the
+  // frontend config it contains - held to on the way back out of the cache.
+  if (dir && has(dir, 'src-tauri/tauri.conf.json') && !/\btauri\b/.test(command)) return null;
   return {
     stack: c.name, kind: kindOf(command, null), command,
     port: c.port ?? null, url: c.url ?? null, cached: true,
@@ -584,6 +592,21 @@ function selftest() {
   assert.strictEqual(kindOf('uv run uvicorn main:app --reload', null), 'web');
   assert.strictEqual(kindOf('npm run dev', null), 'web');
 
+  // launch.json is shared with the harness, so a cached entry may be someone
+  // else's. One that runs the frontend of a tauri repo is refused rather than
+  // trusted: it starts half the application and reports the wrong surface.
+  const foreign = mk('foreign', {
+    'src-tauri/tauri.conf.json': '{}',
+    'package.json': '{"scripts":{"dev":"vite"}}',
+    '.claude/launch.json': JSON.stringify({
+      version: '0.0.1',
+      configurations: [{ name: 'web', runtimeExecutable: 'pnpm', runtimeArgs: ['dev'], port: 1420 }],
+    }),
+  });
+  assert.strictEqual(load(foreign, null, foreign), null, 'a non-tauri entry in a tauri repo is not trusted');
+  assert.strictEqual(load(foreign, null).stack, 'web', 'without a dir there is nothing to check it against');
+  assert.strictEqual(detect(foreign).stack, 'tauri', 'detection then finds the real stack');
+
   // A monorepo whose root is not itself runnable: both apps are found, and
   // each is named for its path so two Next apps cannot collide in the cache.
   const mono = mk('mono', {
@@ -647,7 +670,7 @@ const root = repoRoot(dir);
 if (cmd === 'detect') {
   const target = positional ? path.resolve(dir, positional) : dir;
   const name = configName(root, target, null);
-  const cached = argv.includes('--fresh') ? null : load(root, name);
+  const cached = argv.includes('--fresh') ? null : load(root, name, target);
   let d = cached || detect(target);
 
   // Only ask which app when the root itself is not runnable. A repo that has

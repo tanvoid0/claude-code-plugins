@@ -59,9 +59,10 @@ rather than coordinates off a screenshot, at a tenth of the tokens.
 hit. `/drive` reads only the note for the surface in front of it, so a session that
 touches a Flutter app never loads the note about Windows message posting.
 
-Four are written: `web.md`, `android.md`, `flutter.md` and `windows.md`. A stack
-with no note gets driven the hard way once, and `/drive` then says to write the
-note, so the next session reads it instead of re-deriving it.
+Five are written: `web.md`, `android.md`, `flutter.md`, `tauri.md` and
+`windows.md`. A stack with no note gets driven the hard way once, and `/drive`
+then says to write the note, so the next session reads it instead of re-deriving
+it.
 
 ## Detection
 

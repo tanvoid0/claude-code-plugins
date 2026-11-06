@@ -40,7 +40,7 @@
     {
       "name": "hands",
       "source": "./hands",
-      "description": "Start, stop and look at the app in front of you. Detects the stack once and caches it.",
+      "description": "Start, stop, look at and drive the app in front of you - a window, an emulator or a page - without taking over the desktop.",
       "category": "productivity",
       "keywords": [
         "dev-server",

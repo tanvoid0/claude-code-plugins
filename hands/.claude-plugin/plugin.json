@@ -1,6 +1,6 @@
 {
   "name": "hands",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Start, stop, look at and drive the app in front of you - a window, an emulator or a page - without taking over the desktop. Detects the stack once and caches it.",
   "author": {
     "name": "Tanveer Hoque"

@@ -12,6 +12,7 @@ added after you work it out once.
 | surface | how you know | note to read |
 |---|---|---|
 | a web page | `ops.js detect` says `"kind": "web"` | `stacks/web.md` |
+| a Tauri app | `src-tauri/tauri.conf.json` | `stacks/tauri.md` |
 | a Flutter app | `pubspec.yaml` with a `flutter:` section | `stacks/flutter.md` |
 | an Android emulator or device | an `android/` dir, `app/build.gradle`, or `$ARGUMENTS` names one | `stacks/android.md` |
 | a window on this machine | anything else with a visible window: desktop app, Tauri shell, emulator UI, game | `stacks/windows.md` |

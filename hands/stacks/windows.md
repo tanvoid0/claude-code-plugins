@@ -24,9 +24,11 @@ a flow runs. The cost is that nothing is guaranteed to arrive:
 
 - Win32 controls (Edit, RichEdit, Button, native dialogs) take it reliably.
 - Flutter desktop takes posted clicks: a click into a background Flutter window
-  moved its counter, with no focus taken (`stacks/flutter.md`). Chromium and
-  Electron take keyboard input on the top window and are less predictable on
-  clicks, because the hit test happens in the renderer.
+  moved its counter, with no focus taken (`stacks/flutter.md`).
+- Webview windows (Tauri, and Electron by the same structure) take both clicks
+  and keystrokes, but only on the innermost `Chrome_RenderWidgetHostHWND` child -
+  the outer windows swallow them silently. `click` and `type` descend to it;
+  `stacks/tauri.md` has the window tree.
 - Anything reading raw device state - games, custom input stacks, apps using Raw
   Input or DirectInput - ignores posted messages entirely.
 

@@ -3,6 +3,17 @@
 Measured 19 August 2026. Every figure comes from a transcript or an executed
 check. Limitations are at the bottom — read them before quoting anything.
 
+**The dollar figures are not a bill.** This work ran on a Claude Max
+subscription, so none of it was charged per token. The token counts are
+measured; the dollar column is those tokens priced at published API rates,
+because that is the only way to compare an opus turn against a haiku one on one
+scale. Read it as *API-equivalent cost*, never as money paid. The ratios are
+what the numbers are for, and a ratio is unaffected by which unit it is in.
+
+On a subscription the resource a runaway session actually eats is the rate
+limit, not the card — which is the same tail, in the currency that constrains
+you.
+
 ## crew — four identical tasks, two arms
 
 Fixture: a 176-line billing service whose defects interact. `applyDiscount` and
@@ -85,7 +96,7 @@ tokens only, deduplicated by message id.
 | measure | value |
 |---|---|
 | sessions analysed | 395 |
-| total output tokens / spend | 27,654,732 / $690.13 |
+| total output tokens / API-equivalent | 27,654,732 / $690.13 |
 | median | 45,292 |
 | p90 / p99 | 162,517 / 320,738 |
 | largest session | 432,460 ($10.81, $5.77 of it past 200k) |
@@ -93,13 +104,13 @@ tokens only, deduplicated by message id.
 | soft warnings | 74 (19%) |
 | **hard stops** | **24 (6.1%)** |
 | past the ceiling | 2 |
-| **spend past the gate** | **$40.34** (5.8% of all output spend) |
+| **past the gate** | **$40.34** equivalent (5.8% of the total) |
 
 This reproduces [governor's README](governor/README.md) from raw data. It claims
 ~390 sessions, median 45k, p90 163k, p99 321k, and a 200k budget interrupting
 "the top ~6%"; replaying from scratch gives 395, 45,292, 162,517, 320,738, 6.1%.
 
-**Read $40.34 as a ceiling, not a saving.** It is spend that occurred *after* the
+**Read $40.34 as a ceiling, not a saving.** It is consumption that occurred *after* the
 gate would have denied the next call. Some of that work was useful, and the gate
 is deliberately liftable. The defensible claim is narrower: in 24 sessions,
 $40.34 happened silently that would instead have been an explicit decision.
@@ -128,7 +139,8 @@ Costs come from each agent's own transcript, deduplicated by message id —
 streaming logs the same assistant message twice, which would double every number
 — split into input, output, cache-write and cache-read, priced at published
 rates: opus $5/$25, sonnet $3/$15, haiku $1/$5 per MTok; cache write 1.25×
-input, cache read 0.1×. The whole experiment cost $1.68.
+input, cache read 0.1×. The whole experiment came to $1.68 of API-equivalent
+cost, and nothing on a bill.
 
 ## What would change these numbers
 
@@ -141,6 +153,10 @@ input, cache read 0.1×. The whole experiment cost $1.68.
   changes cache economics — Arm A read 322,512 cached tokens on T4 alone.
 - **Sonnet intro pricing ignored.** Priced at standard $3/$15; Sonnet 5 is
   $2/$10 until 31 August 2026, which would make `crew` look *better*.
+- **Nothing here was billed per token.** It ran on a Claude Max subscription,
+  so every dollar figure is an API-rate valuation of measured tokens rather than
+  an invoice. Anyone actually paying API rates would see these numbers as money;
+  a subscriber sees them as rate limit. The ratios hold either way.
 - **One developer's sessions.** 395 transcripts, one person, 25 projects. Anyone
   running long agentic sweeps daily would hit the gate more than 6% of the time.
 - **Task selection.** Four tasks chosen to span `crew`'s tiers.

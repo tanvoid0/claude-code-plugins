@@ -25,8 +25,43 @@ file, two readers, no new config.
 | `/down [port\|--all]` | kill the listener and its children — cached port if none given |
 | `/restart [app]` | down, wait for the socket to clear, up |
 | `/logs` | tail the dev server started by `/up` |
-| `/shot` | screenshot the running app: browser pane for web, desktop capture for native |
+| `/shot` | screenshot the running app: browser pane for web, the window itself for native |
+| `/drive` | look at and drive the app in place: a window, an emulator, a page |
 | `/procs` | every dev server and container port on this machine, with its pid |
+
+## Driving without the desktop
+
+Taking over the desktop to look at an app is the expensive way to do it. The mouse
+has to be moved, the window found, the right monitor picked, and whatever the user
+was doing is interrupted — all before the first useful pixel. `/drive` and `/shot`
+skip it: an app is addressed where it already is.
+
+| surface | read it as text | look at it | drive it |
+|---|---|---|---|
+| web page | `read_page` | Browser pane | `computer` / `form_input` |
+| Windows app | `win.ps1 tree` | `win.ps1 shot` | `win.ps1 click/type/key` |
+| Android | `android.js ui` | `android.js shot` | `android.js tap/text/key` |
+
+`win.ps1` captures with `PrintWindow(PW_RENDERFULLCONTENT)`, which asks the window
+to draw itself into a bitmap — so a window that is covered, on another monitor,
+off-screen or minimised captures exactly the same, and nothing is focused or moved.
+Input is `PostMessage` into the window's queue: the mouse never moves and the user
+keeps their focus. That is best-effort by nature (Win32 controls take it, games do
+not), so posted input is followed by a capture to check it landed.
+
+`android.js` boots the emulator with `-no-window`. There is no window to find at
+all, and `ui` returns the screen as a list of labelled points — `tap "Sign in"`
+rather than coordinates off a screenshot, at a tenth of the tokens.
+
+### Growing it
+
+`stacks/` holds one note per surface — what it is, the commands, the traps actually
+hit. `/drive` reads only the note for the surface in front of it, so a session that
+touches a Flutter app never loads the note about Windows message posting.
+
+Four are written: `web.md`, `android.md`, `flutter.md` and `windows.md`. A stack
+with no note gets driven the hard way once, and `/drive` then says to write the
+note, so the next session reads it instead of re-deriving it.
 
 ## Detection
 

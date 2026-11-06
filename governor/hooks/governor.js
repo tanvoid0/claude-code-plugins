@@ -14,23 +14,39 @@ const path = require('path');
 
 const DEFAULTS = {
   enabled: true,
-  // Budget is in OUTPUT tokens: they drive cost and they are what a runaway
-  // loop actually burns. Cache reads are ~0.1x and are ignored on purpose.
-  budget: 200000,
+  // Weighted by default. Measured over 563 local sessions: 24.6B input tokens
+  // against 91.8M output — 268 tokens re-read per token written. An unweighted
+  // budget therefore watches 0.4% of the spend and never fires on the thing
+  // that actually costs: a long session re-reading its own context every turn.
+  weighted: true,
+  // Budget is in output-token EQUIVALENTS (see WEIGHTS). Calibrated off the
+  // same 563 sessions: p50 0.6M, p75 1.7M, p90 2.8M. Soft warn at 0.9M is past
+  // the median session; the stop at 1.5M lands on the top quartile — the ones
+  // that were going to be expensive whether or not anyone noticed.
+  budget: 1500000,
   // The model may raise `budget` mid-session (config edits are never blocked),
   // but never past `ceiling` — that one is the user's, from ~/.claude only.
-  ceiling: 350000,
-  // Output tokens alone undercount tool-heavy work badly: a turn can read
-  // 300k cached tokens and emit 168. Weighted mode counts every token class at
-  // its price relative to output, so the budget tracks cost instead. Same unit
-  // either way -- the budget is output-token equivalents.
-  weighted: false,
+  ceiling: 4000000,
   softRatio: 0.6,        // warn once at 60% of budget
   hardRatio: 1.0,        // deny tool calls at 100%
-  burnTokens: 25000,     // ...or if this many output tokens land
+  burnTokens: 120000,    // ...or if this many weighted tokens land
   burnMinutes: 5,        // ...inside this window
   rewarnMinutes: 10,     // floor between repeated warnings
 };
+
+// Context size per turn, which is what drives the weighted tally: every turn
+// re-reads all of it. Warning here is worth more than the budget gate, because
+// it fires while the session can still be steered somewhere cheaper.
+const CTX_WARN = 120000, CTX_HIGH = 200000, CTX_URGENT = 300000;
+
+// Images are the densest thing a session can hold: ~1-1.5k tokens each, kept
+// for the rest of the session, and a screenshot loop produces them by the
+// dozen. Measured locally: 2,060 image results across the transcripts.
+const IMAGE_WARN = 8;
+
+// How many read keys to remember. Enough for any real session, bounded so the
+// state file cannot grow without limit.
+const READ_MEMORY = 300;
 
 // State lives under the user's home, not os.tmpdir(): on Linux and macOS /tmp
 // is world-writable, so a predictable path there lets any other local user
@@ -99,7 +115,7 @@ function loadConfig(cwd, home = os.homedir()) {
 }
 
 function freshState() {
-  return { offset: 0, output: 0, window: [], seen: [], softWarnedAt: 0, burnWarnedAt: 0, weighted: false };
+  return { offset: 0, output: 0, ctx: 0, images: 0, reads: {}, window: [], seen: [], softWarnedAt: 0, burnWarnedAt: 0, ctxWarnedAt: 0, imagesWarnedAt: 0, handoffDone: false, weighted: false };
 }
 
 // The state file is input, not memory: it outlives the process and sits on
@@ -114,12 +130,18 @@ function loadState(sessionId) {
     return {
       offset: num(s.offset),
       output: num(s.output),
+      ctx: num(s.ctx),
+      images: num(s.images),
+      reads: s.reads && typeof s.reads === 'object' && !Array.isArray(s.reads) ? s.reads : {},
       window: Array.isArray(s.window)
         ? s.window.filter((e) => Array.isArray(e) && typeof e[0] === 'number' && typeof e[1] === 'number')
         : [],
       seen: Array.isArray(s.seen) ? s.seen.filter((id) => typeof id === 'string') : [],
       softWarnedAt: num(s.softWarnedAt),
       burnWarnedAt: num(s.burnWarnedAt),
+      ctxWarnedAt: num(s.ctxWarnedAt),
+      imagesWarnedAt: num(s.imagesWarnedAt),
+      handoffDone: !!s.handoffDone,
       weighted: !!s.weighted,
     };
   } catch { /* absent, unreadable or malformed: first call this session */ }
@@ -176,8 +198,32 @@ function tally(transcriptPath, state, now, weighted) {
       if (!line) continue;
       let entry;
       try { entry = JSON.parse(line); } catch { continue; }
+      // Cheap and good enough: an image part in a tool result is the only thing
+      // that serialises this way, and the count only has to be right to ±1.
+      if (line.includes('"type":"image"')) {
+        state.images += (line.match(/"type":"image"/g) || []).length;
+      }
+
       const usage = entry && entry.message && entry.message.usage;
-      if (!usage) continue;
+      // A subagent's spend never lands here as usage — it is logged to its own
+      // transcript, and only the total comes back in the Agent tool result. Left
+      // unclaimed, a fan-out of ten agents costs the parent's tally nothing,
+      // which is exactly backwards. Weighted like input, since a child's tokens
+      // are mostly its own system prompt and context being read.
+      if (!usage) {
+        const uid = entry && entry.uuid;
+        if (weighted && uid && !seen.has(uid) && line.includes('subagent_tokens')) {
+          let sub = 0;
+          for (const m of line.matchAll(/subagent_tokens["\s:]+(\d+)/g)) sub += Number(m[1]);
+          if (sub) {
+            seen.add(uid);
+            const w = WEIGHTS.input * sub;
+            state.output += w;
+            state.window.push([Date.parse(entry.timestamp || '') || now, w]);
+          }
+        }
+        continue;
+      }
       // Streaming can log the same assistant message more than once.
       const id = entry.message.id || entry.uuid;
       if (id) {
@@ -187,6 +233,9 @@ function tally(transcriptPath, state, now, weighted) {
       const out = weigh(usage, weighted);
       if (!out) continue;
       state.output += out;
+      state.ctx = (usage.input_tokens || 0)
+        + (usage.cache_read_input_tokens || 0)
+        + (usage.cache_creation_input_tokens || 0);
       const at = Date.parse(entry.timestamp || '') || now;
       state.window.push([at, out]);
     }
@@ -219,31 +268,66 @@ function decide(cfg, state, now) {
   const soft = Math.min(cfg.budget * cfg.softRatio, hard);
   const recent = burnRate(state, now, cfg.burnMinutes);
   const spent = state.output;
+  const unit = cfg.weighted ? 'weighted tokens' : 'output tokens';
 
   if (spent >= hard) {
     const head =
-      `Token budget spent: ${fmt(spent)} of ${fmt(cfg.budget)} output tokens. ` +
-      `Tool calls are blocked. Summarise for the user what is done and what is left.`;
+      `Token budget spent: ${fmt(spent)} of ${fmt(cfg.budget)} ${unit}. ` +
+      `Tool calls are blocked. The expected move is to STOP: write the user a handoff — ` +
+      `what is done, what is left, which files matter — and let them start a fresh ` +
+      `session, where the same work costs a fraction of what it costs at this context size.`;
     return {
       deny: true,
       message: cfg.budget >= cfg.ceiling
         ? head + ` This is the ceiling (${fmt(cfg.ceiling)}) — only the user can lift ` +
           `it, in ~/.claude/governor.json. Agree a smaller plan, or a fresh session.`
-        : head + ` If the remaining work genuinely needs it, say so in chat and raise ` +
-          `"budget" in .claude/governor.json (headroom to ${fmt(cfg.ceiling)}, the ` +
-          `ceiling only the user can lift). Do not raise it to keep a loop going.`,
+        : head + ` Raising "budget" in .claude/governor.json (headroom to ` +
+          `${fmt(cfg.ceiling)}) is for work that genuinely cannot be handed off — an ` +
+          `edit mid-flight, a migration that must finish. It is not the default, and ` +
+          `it is never the way to keep a loop going. Say in chat that you raised it.`,
     };
   }
 
   const canWarn = (last) => now - last >= cfg.rewarnMinutes * 60000;
 
+  // Context first: it is the cause, the budget is the symptom. Every turn pays
+  // for all of it again, so cumulative cost is quadratic in turn count — which
+  // is why a session feels cheap early and runs away later at no new fault.
+  if (state.ctx >= CTX_WARN && canWarn(state.ctxWarnedAt)) {
+    state.ctxWarnedAt = now;
+    const k = Math.round(state.ctx / 1000);
+    return {
+      deny: false,
+      message: state.ctx >= CTX_URGENT
+        ? `Context is ${k}k — every further turn re-reads all of it. Land the current ` +
+          `thread now: tell the user where things stand and what a fresh session should pick up.`
+        : state.ctx >= CTX_HIGH
+          ? `Context is ${k}k per turn. Finish this thread rather than starting anything new, ` +
+            `and put the next task in a fresh session.`
+          : `Context is ${k}k per turn and only grows. Keep tool output bounded (head/limit, ` +
+            `Grep over Read), and delegate searches to a subagent so only its summary lands here.`,
+    };
+  }
+
+  // Images are ~1-1.5k tokens each and never leave. A screenshot loop is the
+  // fastest way to make a session expensive without writing a line of code.
+  if (state.images >= IMAGE_WARN && canWarn(state.imagesWarnedAt)) {
+    state.imagesWarnedAt = now;
+    return {
+      deny: false,
+      message:
+        `${state.images} images are in this context, ~1k tokens each, re-read every turn ` +
+        `and impossible to evict. If more screenshots are needed, have a subagent look at ` +
+        `them and return a verdict in text — the image then lives in its context, not this one.`,
+    };
+  }
 
   if (recent >= cfg.burnTokens && canWarn(state.burnWarnedAt)) {
     state.burnWarnedAt = now;
     return {
       deny: false,
       message:
-        `Burn rate: ${fmt(recent)} output tokens in the last ${cfg.burnMinutes} minutes ` +
+        `Burn rate: ${fmt(recent)} ${unit} in the last ${cfg.burnMinutes} minutes ` +
         `(${fmt(spent)} of ${fmt(cfg.budget)} used). Before the next expensive step, check ` +
         `the current approach is converging. If it is looping or fanning out wider than ` +
         `the task needs, replan smaller instead of pushing on.`,
@@ -255,7 +339,7 @@ function decide(cfg, state, now) {
     return {
       deny: false,
       message:
-        `${fmt(spent)} of ${fmt(cfg.budget)} output tokens used ` +
+        `${fmt(spent)} of ${fmt(cfg.budget)} ${unit} used ` +
         `(${Math.round((spent / cfg.budget) * 100)}%). Tool calls stop at ` +
         `${fmt(cfg.budget)}. Prioritise what remains: finish the work that matters ` +
         `most first and drop anything optional.`,
@@ -283,6 +367,97 @@ function targetsConfig(input, home = os.homedir()) {
   return input.tool_name === 'Read' || !samePath(f, userConfig(home));
 }
 
+// Cheapest saving available, and it costs no quality: an unbounded dump is
+// re-read on every remaining turn of the session, so `git log | head -20` and
+// `git log` differ by one turn's output and a hundred turns' input. Denied with
+// the bounded form named, so the work still happens — just not twenty more times.
+const UNBOUNDED = [
+  [/\b(ls|dir)\b[^|]*\s-[a-zA-Z]*R|\bGet-ChildItem\b[^|]*-Recurse\b/, 'a recursive listing'],
+  [/\bfind\s+[^|]*$/, 'find with no output bound'],
+  [/\b(grep|rg|Select-String)\b(?![^|]*\b(-l|-c|--files-with-matches|--count)\b)[^|]*(-r|-R|--recursive)/, 'a recursive grep with no bound'],
+  [/\bgit\s+log\b(?![^|]*-\d)/, 'git log with no -n'],
+  [/\bgit\s+diff\b(?![^|]*--stat)/, 'a full git diff'],
+  [/\b(cat|type|Get-Content)\s+\S+\.(jsonl|lock|csv|min\.js|map)\b/, 'a dump of a machine-generated file'],
+];
+
+// Re-reading a file that has not changed pays for it twice: the content is
+// already in context and is being re-read on every turn regardless. The mtime
+// check is the whole design, not a nicety — the worst offender in the measured
+// transcripts was a screenshot rewritten between every read (`_crop.png`, 22
+// times), which is a legitimate loop a naive path-dedupe would have broken.
+function readReason(input, state) {
+  if (input.tool_name !== 'Read') return null;
+  const f = input.tool_input && input.tool_input.file_path;
+  if (typeof f !== 'string') return null;
+
+  const key = (process.platform === 'win32' ? f.toLowerCase() : f) +
+    '|' + (input.tool_input.offset ?? '') + '|' + (input.tool_input.limit ?? '');
+  let mtime = 0;
+  try { mtime = fs.statSync(f).mtimeMs; } catch { return null; }  // unreadable: not ours to judge
+
+  const prior = state.reads && state.reads[key];
+  if (prior !== undefined && mtime <= prior) {
+    return `Blocked: this exact read is already in context and unchanged on disk since. ` +
+      `Scroll back to it rather than paying for it a second time — and note it is being ` +
+      `re-read on every turn either way. If you need a different part of the file, Read it ` +
+      `with offset/limit, or Grep for what you actually want.`;
+  }
+
+  state.reads = state.reads || {};
+  state.reads[key] = mtime;
+  const keys = Object.keys(state.reads);
+  if (keys.length > READ_MEMORY) for (const k of keys.slice(0, keys.length - READ_MEMORY)) delete state.reads[k];
+  return null;
+}
+
+function unboundedReason(input) {
+  if (!['Bash', 'PowerShell'].includes(input.tool_name)) return null;
+  const cmd = input.tool_input && input.tool_input.command;
+  if (typeof cmd !== 'string') return null;
+  if (/\|\s*(head|tail|wc|jq|grep|rg|Select-Object|Measure-Object)\b|-Head\s|-Tail\s|\s-n\s+\d|\s-c\s/.test(cmd)) return null;
+
+  for (const [re, what] of UNBOUNDED) {
+    if (re.test(cmd)) {
+      return `Blocked: ${what}. Its output stays in context and is re-read on every later ` +
+        `turn. Bound it (| head -50, -n 20, --stat, grep -c) or use Read/Grep/Glob, which page.`;
+    }
+  }
+  const m = cmd.match(/\b(?:cat|type|Get-Content)\s+"?([^\s"|;&]+)"?/);
+  if (m) {
+    try {
+      if (fs.statSync(path.resolve(input.cwd || '.', m[1])).size > 65536) {
+        return `Blocked: ${m[1]} is over 64KB and would sit in context for the rest of the ` +
+          `session. Use the Read tool, which pages, or bound the command with head/tail.`;
+      }
+    } catch { /* unresolvable path: not ours to judge */ }
+  }
+  return null;
+}
+
+// A gate that says "stop" without saying "here is what the next session needs"
+// is why nobody starts a fresh one: the state lives in the transcript, and
+// abandoning it feels more expensive than paying for another 300k-token turn.
+// So the last turn of an expensive session buys the first turn of a cheap one.
+function stopVerdict(cfg, state, input) {
+  if (input.stop_hook_active) return null;          // already continuing; never loop
+  if (state.handoffDone) return null;               // once per session
+  const hard = Math.min(cfg.budget * cfg.hardRatio, cfg.ceiling);
+  if (state.ctx < CTX_URGENT && state.output < hard) return null;
+
+  const why = state.ctx >= CTX_URGENT
+    ? `Context is ${Math.round(state.ctx / 1000)}k per turn`
+    : `The token budget is spent (${fmt(state.output)} of ${fmt(cfg.budget)})`;
+
+  return `${why}, so this session has become an expensive place to keep working. ` +
+    `Before you finish: if any work is still outstanding, write a handoff to ` +
+    `.claude/handoff.md — goal, what is done, what is left, the files that matter ` +
+    `with paths, decisions already made and why, and anything that bit you. Write it ` +
+    `for someone with no memory of this conversation. Then tell the user in one line ` +
+    `that it is there, and that a fresh session starting with "read .claude/handoff.md" ` +
+    `picks up where this left off at a fraction of the cost. If nothing is outstanding, ` +
+    `say so in one line and stop — do not write the file.`;
+}
+
 function main() {
   if (process.env.GOVERNOR_OFF === '1') return;
 
@@ -295,6 +470,22 @@ function main() {
 
   const now = Date.now();
   const prior = loadState(input.session_id);
+
+  // Both of these judge the call in front of them, not the tally, so they run
+  // before it — and readReason records into `prior`, which is saved either way.
+  const refuse = unboundedReason(input) || readReason(input, prior);
+  if (refuse) {
+    saveState(input.session_id, prior);
+    process.stdout.write(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: refuse,
+      },
+    }));
+    return;
+  }
+
   // Switching modes mid-session would add weighted numbers to unweighted ones.
   // Start the tally over instead of reporting a figure that means neither.
   if (!!prior.weighted !== !!cfg.weighted) {
@@ -302,6 +493,15 @@ function main() {
   }
   prior.weighted = !!cfg.weighted;
   const state = tally(input.transcript_path, prior, now, cfg.weighted);
+
+  if (input.hook_event_name === 'Stop') {
+    const reason = stopVerdict(cfg, state, input);
+    if (reason) state.handoffDone = true;
+    saveState(input.session_id, state);
+    if (reason) process.stdout.write(JSON.stringify({ decision: 'block', reason }));
+    return;
+  }
+
   const verdict = decide(cfg, state, now);
   saveState(input.session_id, state);
   if (!verdict) return;
@@ -491,6 +691,94 @@ function selftest() {
   fs.writeFileSync(file, line('e', 10, t0));
   st = tally(file, st, t0);
   assert.strictEqual(st.output, 10, 'reset on truncation');
+
+  // Context gate: fires on the size of a single turn, independent of the tally,
+  // because that is the number the budget is downstream of.
+  const ctxSt = { ...freshState(), ctx: 130000 };
+  v = decide(cfg, ctxSt, t0);
+  assert.ok(v && !v.deny && /130k/.test(v.message), 'context gate warns at 120k');
+  assert.strictEqual(decide(cfg, ctxSt, t0 + 1000), null, 'context gate respects the re-warn window');
+  v = decide(cfg, { ...freshState(), ctx: 320000 }, t0);
+  assert.ok(/fresh session/.test(v.message), 'urgent context asks for a handoff');
+  assert.strictEqual(decide(cfg, { ...freshState(), ctx: 90000 }, t0), null, 'quiet below the context gate');
+
+  // A turn's context is the last turn's, not a running total.
+  const cfile = path.join(dir, 'c.jsonl');
+  fs.writeFileSync(cfile,
+    JSON.stringify({ uuid: 'c1', message: { id: 'c1', usage: { output_tokens: 5, cache_read_input_tokens: 100000 } } }) + '\n' +
+    JSON.stringify({ uuid: 'c2', message: { id: 'c2', usage: { output_tokens: 5, cache_read_input_tokens: 150000 } } }) + '\n');
+  assert.strictEqual(tally(cfile, freshState(), t0, true).ctx, 150000, 'ctx tracks the latest turn');
+
+  // Re-reads: blocked only when the file has not moved since. The regenerated
+  // screenshot is the case that matters — measured at 22 reads of one path, all
+  // legitimate, because a script rewrote it between every one.
+  const rf = path.join(dir, 'r.txt');
+  fs.writeFileSync(rf, 'one');
+  const rst = freshState();
+  const readCall = { tool_name: 'Read', tool_input: { file_path: rf } };
+  assert.strictEqual(readReason(readCall, rst), null, 'first read allowed');
+  assert.ok(/already in context/.test(readReason(readCall, rst)), 'identical re-read blocked');
+  fs.utimesSync(rf, new Date(Date.now() + 5000), new Date(Date.now() + 5000));
+  assert.strictEqual(readReason(readCall, rst), null, 'a rewritten file may be re-read');
+  assert.strictEqual(readReason({ tool_name: 'Read', tool_input: { file_path: rf, offset: 50, limit: 10 } }, rst), null, 'a different range is a different read');
+  assert.strictEqual(readReason({ tool_name: 'Read', tool_input: { file_path: path.join(dir, 'gone.txt') } }, rst), null, 'unreadable path is not judged');
+  assert.strictEqual(readReason({ tool_name: 'Edit', tool_input: { file_path: rf } }, rst), null, 'only Read is checked');
+  rst.reads = {};
+  for (let i = 0; i < READ_MEMORY + 20; i++) rst.reads['k' + i] = 1;
+  readReason(readCall, rst);
+  assert.ok(Object.keys(rst.reads).length <= READ_MEMORY + 1, 'read memory stays bounded');
+
+  // Images: counted off the transcript, warned about once.
+  const ifile = path.join(dir, 'i.jsonl');
+  fs.writeFileSync(ifile, JSON.stringify({
+    uuid: 'i1',
+    message: { role: 'user', content: [{ type: 'tool_result', content: [{ type: 'image' }, { type: 'image' }] }] },
+  }) + '\n');
+  assert.strictEqual(tally(ifile, freshState(), t0, true).images, 2, 'images counted');
+  const shots = { ...freshState(), images: IMAGE_WARN };
+  v = decide(cfg, shots, t0);
+  assert.ok(v && !v.deny && /subagent/.test(v.message), 'image warning steers to a subagent');
+  assert.strictEqual(decide(cfg, shots, t0 + 1000), null, 'image warning does not repeat');
+
+  // The handoff: fired once, at the point where continuing costs more than
+  // starting over, and never in a way that can loop.
+  const bigCtx = { ...freshState(), ctx: 310000 };
+  assert.ok(/handoff\.md/.test(stopVerdict(cfg, bigCtx, {})), 'urgent context asks for a handoff');
+  assert.strictEqual(stopVerdict(cfg, bigCtx, { stop_hook_active: true }), null, 'never re-blocks its own continuation');
+  assert.strictEqual(stopVerdict(cfg, { ...bigCtx, handoffDone: true }, {}), null, 'only once per session');
+  assert.strictEqual(stopVerdict(cfg, { ...freshState(), ctx: 100000 }, {}), null, 'quiet in a cheap session');
+  assert.ok(stopVerdict(cfg, { ...freshState(), output: cfg.budget }, {}), 'a spent budget also asks for one');
+
+  // Subagent spend is claimed from the tool result, so fan-out is not free.
+  const sfile = path.join(dir, 's.jsonl');
+  fs.writeFileSync(sfile, JSON.stringify({
+    uuid: 's1',
+    timestamp: new Date(t0).toISOString(),
+    message: { role: 'user', content: [{ type: 'tool_result', content: 'done\n<usage>subagent_tokens: 15495\ntool_uses: 1</usage>' }] },
+  }) + '\n');
+  assert.strictEqual(tally(sfile, freshState(), t0, false).output, 0, 'unweighted ignores subagents, as it ignores input');
+  const sub = tally(sfile, freshState(), t0, true);
+  assert.ok(Math.abs(sub.output - 15495 * WEIGHTS.input) < 1e-6, 'subagent tokens counted, got ' + sub.output);
+  assert.strictEqual(tally(sfile, sub, t0, true).output, sub.output, 'subagent totals are not double counted');
+
+  // Unbounded output: denied with the bounded form named, so the work still happens.
+  const bash = (command) => ({ tool_name: 'Bash', tool_input: { command } });
+  assert.ok(unboundedReason(bash('git log')), 'git log with no bound is denied');
+  assert.strictEqual(unboundedReason(bash('git log -n 5')), null, 'bounded git log allowed');
+  assert.strictEqual(unboundedReason(bash('git log | head -20')), null, 'piped git log allowed');
+  assert.ok(unboundedReason(bash('ls -laR /tmp')), 'recursive listing denied');
+  assert.strictEqual(unboundedReason(bash('ls -la .')), null, 'plain listing allowed');
+  assert.ok(unboundedReason(bash('find . -name "*.js"')), 'unbounded find denied');
+  assert.strictEqual(unboundedReason(bash('find . -name "*.js" | head -20')), null, 'bounded find allowed');
+  assert.ok(unboundedReason(bash('git diff')), 'full diff denied');
+  assert.strictEqual(unboundedReason(bash('git diff --stat')), null, 'diffstat allowed');
+  assert.strictEqual(unboundedReason(bash('flutter test')), null, 'ordinary commands untouched');
+  assert.strictEqual(unboundedReason({ tool_name: 'Read', tool_input: { command: 'git log' } }), null, 'only shell tools are checked');
+  const big = path.join(dir, 'big.txt');
+  fs.writeFileSync(big, 'x'.repeat(70000));
+  assert.ok(unboundedReason({ tool_name: 'Bash', tool_input: { command: `cat ${big}` }, cwd: dir }), 'big cat denied');
+  fs.writeFileSync(path.join(dir, 'small.txt'), 'x');
+  assert.strictEqual(unboundedReason({ tool_name: 'Bash', tool_input: { command: 'cat small.txt' }, cwd: dir }), null, 'small cat allowed');
 
   fs.rmSync(dir, { recursive: true, force: true });
   console.log('governor selftest ok');

@@ -253,7 +253,7 @@ const handlers = {
       const text = note.trim();
       await rpc('create_task', {
         command: {
-          title: text.length > 200 ? `${text.slice(0, 199)}…` : text,
+          title: text.length > 200 ? `${text.slice(0, 198)}…` : text,
           description: text.length > 200 ? text.slice(0, 1000) : undefined,
           type_: 'Subtask',
           status: 'completed',

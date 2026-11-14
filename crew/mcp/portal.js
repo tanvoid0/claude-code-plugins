@@ -92,6 +92,21 @@ const activeSession = (t) => {
   return tag ? tag.slice('session:'.length) : null;
 };
 
+// Rust checks title/description by UTF-8 byte length, not char count — slicing
+// by .length and bolting on an ellipsis (itself 3 bytes) can push a "199-char"
+// string past a 200-byte limit. Cut by bytes, on code-point boundaries.
+function truncateBytes(str, maxBytes, suffix = '…') {
+  const budget = maxBytes - Buffer.byteLength(suffix, 'utf8');
+  let bytes = 0;
+  let out = '';
+  for (const ch of str) {
+    bytes += Buffer.byteLength(ch, 'utf8');
+    if (bytes > budget) break;
+    out += ch;
+  }
+  return out + suffix;
+}
+
 function ago(ts) {
   if (!ts) return '';
   const m = Math.round((Date.now() - Date.parse(ts)) / 60000);
@@ -284,10 +299,11 @@ const handlers = {
     const t = Object.keys(changed).length ? await rpc('update_task', { id, command: changed }) : current;
     if (note) {
       const text = note.trim();
+      const overLong = Buffer.byteLength(text, 'utf8') > 200;
       await rpc('create_task', {
         command: {
-          title: text.length > 200 ? `${text.slice(0, 198)}…` : text,
-          description: text.length > 200 ? text.slice(0, 1000) : undefined,
+          title: overLong ? truncateBytes(text, 200) : text,
+          description: overLong ? truncateBytes(text, 1000, '') : undefined,
           type_: 'Subtask',
           status: 'completed',
           priority: 'low',

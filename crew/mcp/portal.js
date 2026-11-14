@@ -86,6 +86,11 @@ const tags = (t) => {
   }
 };
 const isNote = (t) => tags(t).includes('note');
+const activeSession = (t) => {
+  if (t.status !== 'in-progress') return null;
+  const tag = tags(t).find((x) => x.startsWith('session:'));
+  return tag ? tag.slice('session:'.length) : null;
+};
 
 function ago(ts) {
   if (!ts) return '';
@@ -98,6 +103,7 @@ function ago(ts) {
 const line = (t) =>
   `#${t.id} ${t.status} ${t.priority} ${t.type_ ?? 'Task'} "${t.title}"` +
   (t.assignee ? ` @${t.assignee}` : '') +
+  (activeSession(t) ? ` 🟢${activeSession(t)}` : '') +
   ` · ${ago(t.updated_at ?? t.created_at)}`;
 
 // --- tools ----------------------------------------------------------------
@@ -148,6 +154,11 @@ const tools = [
         assignee: { type: 'string', description: 'Who owns it: an agent role (coder, reviewer, …), "claude", or "owner".' },
         parent_id: { type: 'integer', description: 'Makes this a step of that task; inherits its project.' },
         project: projectArg,
+        session_id: {
+          type: 'string',
+          description:
+            'External session id (e.g. this Claude session) claiming the task. Auto-cleared when status leaves in-progress; pass "" to clear it explicitly while still in-progress.',
+        },
       },
       required: ['title'],
     },
@@ -167,6 +178,11 @@ const tools = [
         assignee: { type: 'string' },
         title: { type: 'string' },
         description: { type: 'string' },
+        session_id: {
+          type: 'string',
+          description:
+            'External session id (e.g. this Claude session) claiming the task. Auto-cleared when status leaves in-progress; pass "" to clear it explicitly while still in-progress.',
+        },
       },
       required: ['id'],
     },
@@ -229,15 +245,16 @@ const handlers = {
       .join('\n');
   },
 
-  async add({ title, description, type = 'Task', priority = 'medium', status = 'pending', assignee, parent_id, project: ref }) {
+  async add({ title, description, type = 'Task', priority = 'medium', status = 'pending', assignee, parent_id, project: ref, session_id }) {
     let link;
+    const sessionTag = session_id ? [`session:${session_id}`] : [];
     if (parent_id) {
       const parent = await rpc('get_task', { id: parent_id });
       if (!parent) throw new Error(`No task #${parent_id} to add a step to.`);
-      link = { resource_id: parent.resource_id, resource_type: parent.resource_type, tags: parent.tags };
+      link = { resource_id: parent.resource_id, resource_type: parent.resource_type, tags: JSON.stringify([...tags(parent), ...sessionTag]) };
     } else {
       const p = await project(ref);
-      link = { resource_id: String(p.id), resource_type: 'project', tags: JSON.stringify([p.name]) };
+      link = { resource_id: String(p.id), resource_type: 'project', tags: JSON.stringify([p.name, ...sessionTag]) };
     }
     const t = await rpc('create_task', {
       command: { title, description, type_: type, priority, status, assignee, parent_id, ...link },
@@ -245,10 +262,26 @@ const handlers = {
     return `Added ${line(t)}`;
   },
 
-  async update({ id, note, by, ...fields }) {
+  async update({ id, note, by, session_id, ...fields }) {
     const changed = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined && v !== ''));
-    let t = Object.keys(changed).length ? await rpc('update_task', { id, command: changed }) : await rpc('get_task', { id });
-    if (!t) throw new Error(`No task #${id}.`);
+    const current = await rpc('get_task', { id });
+    if (!current) throw new Error(`No task #${id}.`);
+
+    // The session tag only means anything while in-progress: it auto-clears
+    // leaving that status, and only an explicit session_id touches it otherwise.
+    const effectiveStatus = changed.status ?? current.status;
+    const curTags = tags(current);
+    let newTags = curTags;
+    if (effectiveStatus !== 'in-progress') {
+      newTags = curTags.filter((x) => !x.startsWith('session:'));
+    } else if (session_id !== undefined) {
+      newTags = [...curTags.filter((x) => !x.startsWith('session:')), ...(session_id ? [`session:${session_id}`] : [])];
+    }
+    if (newTags.length !== curTags.length || newTags.some((x, i) => x !== curTags[i])) {
+      changed.tags = JSON.stringify(newTags);
+    }
+
+    const t = Object.keys(changed).length ? await rpc('update_task', { id, command: changed }) : current;
     if (note) {
       const text = note.trim();
       await rpc('create_task', {

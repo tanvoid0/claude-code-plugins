@@ -202,9 +202,82 @@ const tools = [
       required: ['id'],
     },
   },
+  {
+    name: 'run',
+    description:
+      'Run a shell command in a project folder through Portal, so it shows in Portal\'s Action Runs where the developer can watch the live output, stop it, or re-run it. Waits for it to finish (up to wait_seconds) and returns status + the end of the output. If the developer stops it, the result says STOPPED BY THE USER — do not retry unless they ask.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'Shell command, e.g. "pnpm lint".' },
+        project: projectArg,
+        cwd: { type: 'string', description: 'Run here instead of the project root.' },
+        wait_seconds: { type: 'integer', description: 'How long to wait before returning while it keeps running. Default 120, max 600.' },
+      },
+      required: ['command'],
+    },
+  },
+  {
+    name: 'run_status',
+    description: 'Status and the end of the output of a run started with the run tool (still running, finished, failed, or stopped by the user).',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Run id from the run tool.' } }, required: ['id'] },
+  },
 ];
 
+// --- runs -----------------------------------------------------------------
+
+let clientName = 'mcp';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const FINISHED = ['success', 'failed', 'cancelled'];
+
+// What a terminal would show: escape codes gone, a \r redraw keeps its last state.
+function terminalText(raw) {
+  return raw
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g, '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((l) => l.replace(/\r+$/, '').split('\r').pop())
+    .join('\n');
+}
+
+async function describeRun(id) {
+  const run = await rpc('get_script_execution', { execution_id: id });
+  if (!run) throw new Error(`No run ${id} (it may have been deleted in Portal).`);
+  const status = run.status;
+  const raw = FINISHED.includes(status)
+    ? run.output ?? ''
+    : (await rpc('get_script_execution_live_output', { execution_id: id })).join('');
+  const out = terminalText(raw).trim().split('\n').slice(-60).join('\n');
+  const head =
+    status === 'cancelled'
+      ? `STOPPED BY THE USER in Portal (${run.error ?? 'Stopped by user'}). Do not retry unless they ask.`
+      : status === 'success'
+        ? `Succeeded (exit ${run.exitCode ?? 0}).`
+        : status === 'failed'
+          ? `Failed (exit ${run.exitCode ?? '?'}).`
+          : `Still running — check again with run_status id="${id}".`;
+  return `${head}\nrun ${id} · ${run.command}\nIn Portal: Action Runs → /pipeline-runs/${id}${out ?`\n--- output (tail) ---\n${out}` : ''}`;
+}
+
 const handlers = {
+  async run({ command, project: ref, cwd, wait_seconds }) {
+    const dir = cwd || (await project(ref)).path;
+    const id = await rpc('execute_script', {
+      params: { command, workingDirectory: dir, env: { CI: 'true' }, triggeredBy: `mcp:${clientName}` },
+    });
+    const deadline = Date.now() + Math.min(Math.max(wait_seconds ?? 120, 1), 600) * 1000;
+    while (Date.now() < deadline) {
+      const run = await rpc('get_script_execution', { execution_id: id });
+      if (!run || FINISHED.includes(run.status)) break;
+      await sleep(1000);
+    }
+    return describeRun(id);
+  },
+
+  async run_status({ id }) {
+    return describeRun(id);
+  },
+
   async projects({ query }) {
     const all = await rpc('get_all_projects');
     const q = (query ?? '').toLowerCase();
@@ -336,6 +409,8 @@ function serve() {
       if (msg.id === undefined) return; // notification
       const { id, method, params } = msg;
       if (method === 'initialize') {
+        // Runs are tagged mcp:<client> so Portal shows who asked for them.
+        clientName = String(params?.clientInfo?.name || 'mcp').replace(/[^\w.-]/g, '-');
         return send({
           id,
           result: {
@@ -375,6 +450,7 @@ function selftest() {
   assert.equal(id('D:\\projects\\production\\portal\\portal_desktop\\src-tauri'), 1); // other-OS path
   assert.equal(id('C:\\elsewhere\\ui'), null); // one shared segment is not a match
   assert.equal(id('C:\\Users\\tanvo'), null);
+  assert.equal(terminalText('a\n10%\r100%\n\x1b[32mok\x1b[0m\r\n'), 'a\n100%\nok\n');
   console.log('portal.js selftest ok');
 }
 

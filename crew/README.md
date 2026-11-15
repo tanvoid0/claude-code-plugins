@@ -35,6 +35,8 @@ plainly when it is not.
 | `task` | One task: description, plan steps, progress log. |
 | `add` | New item. `Bug` to raise an issue, `Subtask` + `parent_id` for a plan step. |
 | `update` | Change status / assignee / priority, and append a progress note. |
+| `run` | Run a command in a project through Portal (shows in Action Runs, tagged `mcp:<client>`); waits and reports success / failure / **stopped by the user**. Needs a Portal build with run tagging. |
+| `run_status` | Status + output tail of a run by id. |
 
 `project` takes an id, a name, or a path — the deepest registered project that
 contains the path wins. A progress note is a completed `Subtask` tagged `note`

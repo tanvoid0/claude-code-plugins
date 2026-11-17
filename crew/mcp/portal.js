@@ -134,7 +134,29 @@ const tools = [
     description: 'List Portal projects (id, name, path). Use to find the project id for a repo.',
     inputSchema: {
       type: 'object',
-      properties: { query: { type: 'string', description: 'Substring of name or path.' } },
+      properties: {
+        query: { type: 'string', description: 'Substring of name or path.' },
+        starred: { type: 'boolean', description: 'Only starred projects.' },
+        dirty: { type: 'boolean', description: 'Only projects with uncommitted changes.' },
+        unpushed: { type: 'boolean', description: 'Only projects with unpushed commits.' },
+        risk: { type: 'string', description: 'Risk level, e.g. none, low, medium, high.' },
+        activity: { type: 'string', description: 'Activity status, e.g. recent, stale.' },
+        status: { type: 'string', description: 'Project status, e.g. active, archived.' },
+        limit: { type: 'integer', description: 'Max rows. Default 50.' },
+      },
+    },
+  },
+  {
+    name: 'create_project',
+    description:
+      'Register a repo folder as a Portal project so it can have a board. Call it only after the projects tool shows the folder is not registered. Returns the existing project if the exact path is already registered.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Project name. Default: the folder name.' },
+        path: { type: 'string', description: 'Absolute folder path. Default: this server\'s working directory.' },
+        description: { type: 'string' },
+      },
     },
   },
   {
@@ -146,7 +168,39 @@ const tools = [
       properties: {
         project: projectArg,
         done: { type: 'boolean', description: 'Also show tasks completed or cancelled in the last 7 days.' },
+        status: { type: 'string', enum: STATUSES, description: 'Only this status (a closed one implies done).' },
+        priority: { type: 'string', enum: PRIORITIES },
+        type: { type: 'string', enum: TYPES },
+        assignee: { type: 'string', description: 'Exact assignee, e.g. owner, claude, coder.' },
+        search: { type: 'string', description: 'Substring of title or description.' },
+        overdue: { type: 'boolean', description: 'Only tasks past their due date.' },
       },
+    },
+  },
+  {
+    name: 'runs',
+    description: 'Recent Action Runs (commands run through Portal), newest first, optionally filtered. Use run_status with an id for the output.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', description: 'success, failed, running, cancelled.' },
+        search: { type: 'string', description: 'Substring of the command or working directory.' },
+        project: projectArg,
+        limit: { type: 'integer', description: 'Default 20, max 200.' },
+      },
+    },
+  },
+  {
+    name: 'automations',
+    description: 'Portal automation workflows: the embedded engine and n8n. Says plainly when an engine is not running.',
+    inputSchema: { type: 'object', properties: { search: { type: 'string', description: 'Substring of the workflow name.' } } },
+  },
+  {
+    name: 'sdks',
+    description: 'Installed SDK versions per version manager (nvm, rustup, sdkman). Read-only; installs and switches are done in Portal.',
+    inputSchema: {
+      type: 'object',
+      properties: { manager: { type: 'string', description: 'One manager. Default: nvm, rustup and sdkman.' } },
     },
   },
   {
@@ -278,25 +332,109 @@ const handlers = {
     return describeRun(id);
   },
 
-  async projects({ query }) {
+  async projects({ query, starred, dirty, unpushed, risk, activity, status, limit }) {
     const all = await rpc('get_all_projects');
     const q = (query ?? '').toLowerCase();
-    const hits = all.filter((p) => !q || p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q));
-    const shown = hits.slice(0, 50).map((p) => `${p.id} ${p.name} — ${p.path}`);
-    return [...shown, hits.length > 50 ? `…${hits.length - 50} more; narrow with query.` : ''].join('\n').trim() || 'No projects match.';
+    const eq = (a, b) => String(a ?? '').toLowerCase() === b.toLowerCase();
+    const hits = all
+      .filter((p) => !q || p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q))
+      .filter((p) => starred === undefined || !!p.starred === starred)
+      .filter((p) => dirty === undefined || !!p.has_uncommitted_changes === dirty)
+      .filter((p) => unpushed === undefined || p.unpushed_commits > 0 === unpushed)
+      .filter((p) => !risk || eq(p.risk_level, risk))
+      .filter((p) => !activity || eq(p.activity_status, activity))
+      .filter((p) => !status || eq(p.status, status));
+    const max = Math.min(limit ?? 50, 200);
+    const extra = (p) => {
+      const bits = [
+        p.git_branch,
+        p.has_uncommitted_changes && 'dirty',
+        p.unpushed_commits > 0 && `${p.unpushed_commits} unpushed`,
+        p.starred && 'starred',
+        p.risk_level && p.risk_level !== 'none' && `risk:${p.risk_level}`,
+      ].filter(Boolean);
+      return bits.length ? ` [${bits.join(', ')}]` : '';
+    };
+    const shown = hits.slice(0, max).map((p) => `${p.id} ${p.name} — ${p.path}${extra(p)}`);
+    return [...shown, hits.length > max ? `…${hits.length - max} more; narrow the filter.` : ''].join('\n').trim() || 'No projects match.';
   },
 
-  async tasks({ project: ref, done }) {
+  async runs({ status, search, project: ref, limit }) {
+    const norm = (s) => String(s ?? '').toLowerCase().replace(/\\/g, '/');
+    const dir = ref ? norm((await project(ref)).path) : null;
+    const q = (search ?? '').toLowerCase();
+    const hits = (await rpc('get_recent_script_executions', { limit: 200 }))
+      .filter((r) => !status || r.status === status)
+      .filter((r) => !q || `${r.command} ${r.workingDirectory}`.toLowerCase().includes(q))
+      .filter((r) => !dir || norm(r.workingDirectory).startsWith(dir))
+      .slice(0, Math.min(limit ?? 20, 200));
+    return (
+      hits
+        .map((r) => `${r.id} ${r.status}${r.exitCode != null ? ` (exit ${r.exitCode})` : ''} "${r.command}" in ${r.workingDirectory}`)
+        .join('\n') || 'No runs match.'
+    );
+  },
+
+  async automations({ search }) {
+    const q = (search ?? '').toLowerCase();
+    const name = (w) => String(w.name ?? w.id ?? JSON.stringify(w));
+    const out = [];
+    for (const [label, cmd] of [['embedded', 'list_embedded_workflows'], ['n8n', 'list_available_workflows']]) {
+      try {
+        const list = (await rpc(cmd)).filter((w) => !q || name(w).toLowerCase().includes(q));
+        out.push(`${label}: ${list.length ? list.map((w) => `${w.id ?? ''} ${name(w)}${w.active === false ? ' (inactive)' : ''}`.trim()).join('; ') : 'none'}`);
+      } catch (e) {
+        out.push(`${label}: unavailable (${e.message})`);
+      }
+    }
+    return out.join('\n');
+  },
+
+  async sdks({ manager }) {
+    const out = [];
+    for (const m of manager ? [manager] : ['nvm', 'rustup', 'sdkman']) {
+      try {
+        const v = await rpc('get_manager_installed_versions', { manager_name: m });
+        out.push(`${m}: ${v.length ? v.join(', ') : 'none installed'}`);
+      } catch (e) {
+        out.push(`${m}: unavailable (${e.message})`);
+      }
+    }
+    return out.join('\n');
+  },
+
+  async create_project({ name, path, description }) {
+    const dir = path || process.cwd();
+    const norm = (s) => s.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    const same = (await rpc('get_all_projects')).find((p) => norm(p.path) === norm(dir));
+    if (same) return `Already registered: ${same.id} ${same.name} — ${same.path}`;
+    const p = await rpc('create_project', { name: name || dir.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop(), description, path: dir });
+    return `Created project ${p.id} ${p.name} — ${p.path ?? dir}`;
+  },
+
+  async tasks({ project: ref, done, status, priority, type, assignee, search, overdue }) {
     const every = ref === '*';
     const p = every ? null : await project(ref);
     const names = every ? new Map((await rpc('get_all_projects')).map((x) => [String(x.id), x.name])) : null;
     const filters = every ? { resource_type: 'project' } : { resource_type: 'project', resource_id: String(p.id) };
-    const all = await rpc('get_tasks', { filters });
+    if (priority) filters.priority = [priority];
+    if (type) filters.type_ = [type];
+    let all = await rpc('get_tasks', { filters });
+    if (overdue) {
+      const late = new Set((await rpc('get_overdue_tasks')).map((t) => t.id));
+      all = all.filter((t) => late.has(t.id));
+    }
     const kids = new Map();
     for (const t of all) if (t.parent_id) kids.set(t.parent_id, [...(kids.get(t.parent_id) ?? []), t]);
     const rank = (t) => OPEN.indexOf(t.status) * 3 + PRIORITIES.indexOf(t.priority); // in-progress, then pending; high first
     const week = Date.now() - 7 * 86400000;
-    const shown = (t) => OPEN.includes(t.status) || (done && Date.parse(t.updated_at ?? t.created_at) > week);
+    const q = (search ?? '').toLowerCase();
+    const match = (t) =>
+      (!status || t.status === status) &&
+      (!assignee || t.assignee === assignee) &&
+      (!q || `${t.title} ${t.description ?? ''}`.toLowerCase().includes(q));
+    const wantClosed = done || (status && !OPEN.includes(status));
+    const shown = (t) => match(t) && (OPEN.includes(t.status) || (wantClosed && Date.parse(t.updated_at ?? t.created_at) > week));
     const top = all.filter((t) => !t.parent_id && shown(t)).sort((a, b) => rank(b) - rank(a));
     if (!top.length) return `${every ? 'Every project' : p.name}: board is clear${done ? '' : ' (no open tasks)'}.`;
 

@@ -37,6 +37,10 @@ plainly when it is not.
 | `update` | Change status / assignee / priority, and append a progress note. |
 | `run` | Run a command in a project through Portal (shows in Action Runs, tagged `mcp:<client>`); waits and reports success / failure / **stopped by the user**. Needs a Portal build with run tagging. |
 | `run_status` | Status + output tail of a run by id. |
+| `pipelines` | A project's pipelines, or one pipeline's steps and variables (`id`). |
+| `pipeline_run` | Start a pipeline, wait, report per-step result and the failed step's output. Honours **stopped by the user**. |
+| `pipeline_status` | One execution by `execution_id`, or a pipeline's recent executions by `pipeline_id`. |
+| `pipeline_cancel` | Stop a running execution. |
 
 `project` takes an id, a name, or a path — the deepest registered project that
 contains the path wins. A progress note is a completed `Subtask` tagged `note`

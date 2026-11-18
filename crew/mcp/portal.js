@@ -299,6 +299,48 @@ const tools = [
     },
   },
   {
+    name: 'pipelines',
+    description:
+      'Pipelines of a project (id, name, step count), or one pipeline in full with id: its steps, dependencies, commands and variables. Use the id with pipeline_run.',
+    inputSchema: {
+      type: 'object',
+      properties: { project: projectArg, id: { type: 'integer', description: 'Pipeline id: show its steps and variables.' } },
+    },
+  },
+  {
+    name: 'pipeline_run',
+    description:
+      'Start a pipeline through Portal and wait for it (up to wait_seconds): status, per-step result, and the failing step\'s output. Shows live in Portal\'s Action Runs; the developer can stop it. If it comes back STOPPED BY THE USER, do not retry unless they ask. Steps run commands on this machine.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'integer', description: 'Pipeline id from the pipelines tool.' },
+        variables: { type: 'object', additionalProperties: { type: 'string' }, description: 'Pipeline variable overrides.' },
+        wait_seconds: { type: 'integer', description: 'Default 120, max 600.' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'pipeline_status',
+    description:
+      'One pipeline execution by execution_id: status, steps, and the output of the failed step (or step_id). With pipeline_id instead: that pipeline\'s recent executions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        execution_id: { type: 'string' },
+        pipeline_id: { type: 'integer', description: 'List this pipeline\'s recent executions.' },
+        step_id: { type: 'string', description: 'Show this step\'s log tail instead of the failed one.' },
+        limit: { type: 'integer', description: 'Executions to list. Default 10.' },
+      },
+    },
+  },
+  {
+    name: 'pipeline_cancel',
+    description: 'Stop a running pipeline execution.',
+    inputSchema: { type: 'object', properties: { execution_id: { type: 'string' } }, required: ['execution_id'] },
+  },
+  {
     name: 'run_status',
     description: 'Status and the end of the output of a run started with the run tool (still running, finished, failed, or stopped by the user).',
     inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Run id from the run tool.' } }, required: ['id'] },
@@ -340,7 +382,82 @@ async function describeRun(id) {
   return `${head}\nrun ${id} · ${run.command}\nIn Portal: Action Runs → /pipeline-runs/${id}${out ?`\n--- output (tail) ---\n${out}` : ''}`;
 }
 
+const tail = (raw, n = 40) => terminalText(String(raw ?? '')).trim().split('\n').slice(-n).join('\n');
+
+async function describeExecution(id, stepId) {
+  const e = await rpc('get_pipeline_execution', { execution_id: id });
+  if (!e) throw new Error(`No pipeline execution ${id}.`);
+  const steps = e.stepExecutions ?? [];
+  const head =
+    e.status === 'cancelled'
+      ? `STOPPED BY THE USER in Portal. Do not retry unless they ask.`
+      : e.status === 'success'
+        ? 'Succeeded.'
+        : e.status === 'failed'
+          ? `Failed${e.error ? `: ${e.error}` : '.'}`
+          : `Still ${e.status} (${Math.round(e.progress?.percent ?? 0)}%) — check again with pipeline_status execution_id="${id}".`;
+  const rows = steps.map((s) => `  ${s.status.padEnd(9)} ${s.stepName ?? s.stepId}${s.exitCode != null ? ` (exit ${s.exitCode})` : ''}${s.duration ? ` ${Math.round(s.duration / 1000)}s` : ''}`);
+  const pick = stepId ? steps.find((s) => s.stepId === stepId) : steps.find((s) => s.status === 'failed');
+  let out = '';
+  if (pick) {
+    const logs = await rpc('get_step_execution_logs', { execution_id: id, step_id: pick.stepId }).catch(() => []);
+    out = tail(logs.length ? logs.join('') : pick.output);
+  }
+  return [
+    `${head}\nexecution ${id} · pipeline ${e.pipelineName ?? e.pipelineId ?? '?'} · ${e.status}`,
+    rows.join('\n'),
+    out ? `--- ${pick.stepName ?? pick.stepId} output (tail) ---\n${out}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 const handlers = {
+  async pipelines({ project: ref, id }) {
+    if (id) {
+      const p = await rpc('get_pipeline', { pipeline_id: String(id) });
+      if (!p) throw new Error(`No pipeline ${id}.`);
+      const vars = (p.variables ?? []).map((v) => `${v.name ?? v.key}${v.defaultValue != null ? `=${v.defaultValue}` : ''}`);
+      return [
+        `${p.id} ${p.name}${p.enabled === false ? ' (disabled)' : ''}${p.description ? ` — ${p.description}` : ''}`,
+        'Steps:',
+        ...(p.steps ?? []).map((s) => `  ${s.id} ${s.name ?? ''}${s.dependsOn?.length ? ` after ${s.dependsOn.join(',')}` : ''}: ${s.config?.command ?? '(no command)'}`),
+        vars.length ? `Variables: ${vars.join(', ')}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+    }
+    const p = await project(ref);
+    const list = await rpc('get_pipelines', { project_id: p.id });
+    return (
+      list.map((x) => `${x.id} ${x.name} [${(x.steps ?? []).length} steps${x.enabled === false ? ', disabled' : ''}]`).join('\n') ||
+      `${p.name}: no pipelines.`
+    );
+  },
+
+  async pipeline_run({ id, variables, wait_seconds }) {
+    const e = await rpc('execute_pipeline', { request: { pipelineId: String(id), ...(variables ? { variables } : {}) } });
+    const deadline = Date.now() + Math.min(Math.max(wait_seconds ?? 120, 1), 600) * 1000;
+    let cur = e;
+    while (!FINISHED.includes(cur?.status) && Date.now() < deadline) {
+      await sleep(1000);
+      cur = (await rpc('get_pipeline_execution', { execution_id: e.id })) ?? cur;
+    }
+    return describeExecution(e.id);
+  },
+
+  async pipeline_status({ execution_id, pipeline_id, step_id, limit }) {
+    if (execution_id) return describeExecution(execution_id, step_id);
+    if (!pipeline_id) throw new Error('Pass execution_id, or pipeline_id to list its executions.');
+    const list = await rpc('get_pipeline_executions', { pipeline_id: String(pipeline_id), limit: Math.min(limit ?? 10, 100) });
+    return list.map((e) => `${e.id} ${e.status} ${ago(e.startedAt)}${e.triggeredBy ? ` by ${e.triggeredBy}` : ''}`).join('\n') || 'No executions.';
+  },
+
+  async pipeline_cancel({ execution_id }) {
+    await rpc('cancel_pipeline_execution', { execution_id });
+    return `Cancel requested for ${execution_id}.\n${await describeExecution(execution_id)}`;
+  },
+
   async run({ command, project: ref, cwd, wait_seconds }) {
     const dir = cwd || (await project(ref)).path;
     const id = await rpc('execute_script', {
@@ -382,7 +499,7 @@ const handlers = {
       ].filter(Boolean);
       return bits.length ? ` [${bits.join(', ')}]` : '';
     };
-    const shown = hits.slice(0, max).map((p) => `${p.id} ${p.name} — ${p.path}${extra(p)}`);
+    const shown = hits.slice(0, max).map((p) => `${p.id} ${p.name} — ${p.path}${extra(p)} portal://project/${p.id}`);
     return [...shown, hits.length > max ? `…${hits.length - max} more; narrow the filter.` : ''].join('\n').trim() || 'No projects match.';
   },
 
@@ -489,7 +606,7 @@ const handlers = {
     const steps = children.filter((c) => !isNote(c));
     const log = children.filter(isNote);
     return [
-      line(t),
+      line(t) + ` portal://task/${t.id}`,
       t.description ?? '',
       steps.length ? `\nSteps:\n${steps.map((c) => `  ${c.status === 'completed' ? '[x]' : '[ ]'} #${c.id} ${c.title}${c.assignee ? ` @${c.assignee}` : ''}`).join('\n')}` : '',
       log.length ? `\nLog:\n${log.map((c) => `  ${ago(c.created_at)} ${c.assignee ?? ''}: ${c.title}${c.description ? `\n    ${c.description}` : ''}`).join('\n')}` : '',

@@ -511,6 +511,13 @@ function terminalText(raw) {
     .join('\n');
 }
 
+// A run that failed before printing anything (missing working directory, spawn failure) has only
+// run.error to say why. With output, run.error is "Exit code N" plus that same tail, so it is left out.
+const failureNote = (run, out) => {
+  const why = run.status === 'failed' && !out ? terminalText(String(run.error ?? '')).trim() : '';
+  return why ? `\n--- error ---\n${why}` : '';
+};
+
 async function describeRun(id) {
   const run = await rpc('get_script_execution', { execution_id: id });
   if (!run) throw new Error(`No run ${id} (it may have been deleted in Portal).`);
@@ -527,7 +534,7 @@ async function describeRun(id) {
         : status === 'failed'
           ? `Failed (exit ${run.exitCode ?? '?'}).`
           : `Still running — check again with run_status id="${id}".`;
-  return `${head}\nrun ${id} · ${run.command}\nIn Portal: Action Runs → /pipeline-runs/${id}${out ?`\n--- output (tail) ---\n${out}` : ''}`;
+  return `${head}\nrun ${id} · ${run.command}\nIn Portal: Action Runs → /pipeline-runs/${id}${out ?`\n--- output (tail) ---\n${out}` : ''}${failureNote(run, out)}`;
 }
 
 const tail = (raw, n = 40) => terminalText(String(raw ?? '')).trim().split('\n').slice(-n).join('\n');
@@ -1021,6 +1028,9 @@ function selftest() {
   assert.equal(id('C:\\elsewhere\\ui'), null); // one shared segment is not a match
   assert.equal(id('C:\\Users\\tanvo'), null);
   assert.equal(terminalText('a\n10%\r100%\n\x1b[32mok\x1b[0m\r\n'), 'a\n100%\nok\n');
+  assert.equal(failureNote({ status: 'failed', error: 'Working directory does not exist: X\n' }, ''), '\n--- error ---\nWorking directory does not exist: X');
+  assert.equal(failureNote({ status: 'failed', error: 'Exit code 1\nboom' }, 'boom'), ''); // the output already says it
+  assert.equal(failureNote({ status: 'success' }, ''), '');
   console.log('portal.js selftest ok');
 }
 

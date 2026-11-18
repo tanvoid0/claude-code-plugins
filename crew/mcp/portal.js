@@ -428,6 +428,58 @@ const tools = [
     },
   },
   {
+    name: 'programs',
+    description:
+      'Installed Windows programs (what Add/Remove Programs shows), with size, publisher and whether a silent uninstall exists. Read-only. The id returned is what uninstall and program_leftovers take.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        search: { type: 'string', description: 'Substring of the name or publisher.' },
+        system: { type: 'boolean', description: 'Include hidden system components. Off by default.' },
+      },
+    },
+  },
+  {
+    name: 'program_leftovers',
+    description:
+      'Scan for folders and registry keys a program leaves behind (install folder, AppData, ProgramData, Software\<name> keys). Read-only; works before or after uninstalling.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Id from programs.' } }, required: ['id'] },
+  },
+  {
+    name: 'uninstall',
+    description:
+      'DESTRUCTIVE. Run a program uninstaller (the one it registered) on this machine (blocks until it exits; may raise a UAC prompt or dialog). With cleanup=true, also removes everything program_leftovers lists, after the uninstall succeeds: folders go to the Recycle Bin, registry keys are exported to a backup first. Confirm with the user before calling, and show them program_leftovers first if cleaning up.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Id from programs.' },
+        silent: { type: 'boolean', description: 'No dialogs, where the program supports it (see programs).' },
+        cleanup: { type: 'boolean', description: 'Remove leftovers after a successful uninstall.' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'dev_cleaners',
+    description:
+      'Reclaimable developer junk on this machine (package caches, build output, container leftovers) with sizes and risk. Read-only. Pass roots to also walk folders for project artifacts (node_modules, target/...). Ids feed dev_clean.',
+    inputSchema: { type: 'object', properties: { roots: { type: 'array', items: { type: 'string' } } } },
+  },
+  {
+    name: 'dev_clean',
+    description:
+      'DESTRUCTIVE. Remove dev_cleaners items by id (Recycle Bin unless permanent=true; container resources are always permanent). Items are re-scanned, so only real cleaner items can be removed. Confirm with the user first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ids: { type: 'array', items: { type: 'string' } },
+        roots: { type: 'array', items: { type: 'string' }, description: 'Same roots you scanned with, if any.' },
+        permanent: { type: 'boolean' },
+      },
+      required: ['ids'],
+    },
+  },
+  {
     name: 'sdk_install',
     description:
       'Install an SDK version through a version manager (nvm, rustup, sdkman). Downloads and runs the manager on this machine; can take minutes. Use sdks with available=true to see versions.',
@@ -817,6 +869,56 @@ const handlers = {
     return hits
       .map((v) => `${v.scope.padEnd(6)} ${v.name}${name && reveal ? `=${v.value}` : name ? ' (value hidden; reveal=true to show)' : ''}`)
       .join('\n');
+  },
+
+  async programs({ search, system }) {
+    const q = (search ?? '').toLowerCase();
+    const hits = (await rpc('uninstaller_list_programs'))
+      .filter((p) => system || !p.systemComponent)
+      .filter((p) => !q || `${p.name} ${p.publisher}`.toLowerCase().includes(q));
+    if (!hits.length) return 'No programs match.';
+    return hits
+      .slice(0, 200)
+      .map((p) => `${p.name} ${p.version} | ${p.publisher || '-'} | ${p.sizeKb ? Math.round(p.sizeKb / 1024) + ' MB' : '?'} | ${p.isMsi || p.quietUninstallString ? 'silent ok' : 'no silent'}\n  id: ${p.id}`)
+      .join('\n');
+  },
+
+  async program_leftovers({ id }) {
+    const l = await rpc('uninstaller_scan_leftovers', { id });
+    if (!l.length) return 'No leftovers found.';
+    return l.map((x) => `${x.kind.padEnd(8)} ${x.path}${x.kind === 'folder' ? ` (${(x.sizeBytes / 1048576).toFixed(1)} MB)` : ''}`).join('\n');
+  },
+
+  async uninstall({ id, silent, cleanup }) {
+    // Leftovers are scanned before uninstalling: the registry entry they key off disappears with the program.
+    const paths = cleanup ? (await rpc('uninstaller_scan_leftovers', { id })).map((x) => x.path) : null;
+    const r = await rpc('uninstaller_run', { id, silent: !!silent, cleanup_paths: paths });
+    const out = [`${r.message} (exit ${r.exitCode ?? '?'})`];
+    if (r.cleanup) {
+      out.push(`removed ${r.cleanup.removed.length}, failed ${r.cleanup.failed.length}`, ...r.cleanup.failed.map((f) => `  ${f}`));
+      if (r.cleanup.backupDir) out.push(`registry backups: ${r.cleanup.backupDir}`);
+    }
+    return out.join('\n');
+  },
+
+  async dev_cleaners({ roots }) {
+    const s = await rpc('scan_dev_cleaners', { roots: roots ?? null });
+    return s.groups
+      .map((g) => [
+        `${g.label}${g.available ? '' : ` (unavailable: ${g.unavailableReason})`} - ${(g.totalBytes / 1048576).toFixed(0)} MB`,
+        ...g.items.slice(0, 15).map((i) => `  ${i.id} | ${(i.sizeBytes / 1048576).toFixed(1)} MB | ${JSON.stringify(i.risk)} | ${i.path}`),
+      ].join('\n'))
+      .join('\n');
+  },
+
+  async dev_clean({ ids, roots, permanent }) {
+    const s = await rpc('scan_dev_cleaners', { roots: roots ?? null });
+    const want = new Set(ids);
+    const items = s.groups.flatMap((g) => g.items).filter((i) => want.has(i.id))
+      .map((i) => ({ cleanerId: i.cleanerId, id: i.id, path: i.path, kind: i.kind, permanent: !!permanent }));
+    if (!items.length) return 'None of those ids exist in a fresh scan.';
+    const r = await rpc('clean_dev_items', { items });
+    return [`cleaned ${r.cleaned.length}, failed ${r.failed.length}`, ...r.failed.map((f) => `  ${f.path}: ${f.error}`)].join('\n');
   },
 
   async sdk_install({ manager, version }) {

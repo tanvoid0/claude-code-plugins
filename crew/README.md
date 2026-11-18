@@ -41,6 +41,10 @@ plainly when it is not.
 | `pipeline_run` | Start a pipeline, wait, report per-step result and the failed step's output. Honours **stopped by the user**. |
 | `pipeline_status` | One execution by `execution_id`, or a pipeline's recent executions by `pipeline_id`. |
 | `pipeline_cancel` | Stop a running execution. |
+| `run_cancel` | Stop a running Action Run by id. |
+| `env` | Machine env var names (user/system scope); values hidden unless `name` + `reveal`. Read-only. |
+| `sdks` | Installed + active versions per manager; `available: true` lists installable ones. |
+| `sdk_install` / `sdk_switch` | Install a version, or make one active, via nvm / rustup / sdkman. |
 
 `project` takes an id, a name, or a path — the deepest registered project that
 contains the path wins. A progress note is a completed `Subtask` tagged `note`

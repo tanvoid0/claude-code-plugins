@@ -227,7 +227,10 @@ const tools = [
     description: 'Installed SDK versions per version manager (nvm, rustup, sdkman). Read-only; installs and switches are done in Portal.',
     inputSchema: {
       type: 'object',
-      properties: { manager: { type: 'string', description: 'One manager. Default: nvm, rustup and sdkman.' } },
+      properties: {
+        manager: { type: 'string', description: 'One manager. Default: nvm, rustup and sdkman.' },
+        available: { type: 'boolean', description: 'Also list versions available to install (needs manager; can be long, last 30 shown).' },
+      },
     },
   },
   {
@@ -296,6 +299,44 @@ const tools = [
         wait_seconds: { type: 'integer', description: 'How long to wait before returning while it keeps running. Default 120, max 600.' },
       },
       required: ['command'],
+    },
+  },
+  {
+    name: 'run_cancel',
+    description: 'Stop a run started with the run tool (or any running Action Run) by id.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+  },
+  {
+    name: 'env',
+    description:
+      'This machine\'s persistent environment variables (user and system scope). Lists names only; values stay hidden unless you pass name and reveal=true. Read-only: Portal edits them, this does not.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        search: { type: 'string', description: 'Substring of the variable name.' },
+        scope: { type: 'string', enum: ['user', 'system'] },
+        name: { type: 'string', description: 'Exact variable name to show.' },
+        reveal: { type: 'boolean', description: 'With name: show the value. Off by default; many hold secrets.' },
+      },
+    },
+  },
+  {
+    name: 'sdk_install',
+    description:
+      'Install an SDK version through a version manager (nvm, rustup, sdkman). Downloads and runs the manager on this machine; can take minutes. Use sdks with available=true to see versions.',
+    inputSchema: {
+      type: 'object',
+      properties: { manager: { type: 'string', description: 'nvm, rustup or sdkman.' }, version: { type: 'string' } },
+      required: ['manager', 'version'],
+    },
+  },
+  {
+    name: 'sdk_switch',
+    description: 'Make an installed version the active one for a version manager. Affects every new shell on this machine, not just one project.',
+    inputSchema: {
+      type: 'object',
+      properties: { manager: { type: 'string', description: 'nvm, rustup or sdkman.' }, version: { type: 'string' } },
+      required: ['manager', 'version'],
     },
   },
   {
@@ -534,12 +575,39 @@ const handlers = {
     return out.join('\n');
   },
 
-  async sdks({ manager }) {
+  async run_cancel({ id }) {
+    await rpc('cancel_script_execution', { execution_id: id });
+    return describeRun(id);
+  },
+
+  async env({ search, scope, name, reveal }) {
+    const q = (search ?? '').toLowerCase();
+    const hits = (await rpc('env_list_variables'))
+      .filter((v) => !scope || v.scope === scope)
+      .filter((v) => !name || v.name.toLowerCase() === name.toLowerCase())
+      .filter((v) => !q || v.name.toLowerCase().includes(q));
+    if (!hits.length) return 'No variables match.';
+    return hits
+      .map((v) => `${v.scope.padEnd(6)} ${v.name}${name && reveal ? `=${v.value}` : name ? ' (value hidden; reveal=true to show)' : ''}`)
+      .join('\n');
+  },
+
+  async sdk_install({ manager, version }) {
+    return rpc('install_version_via_manager', { manager_name: manager, version });
+  },
+
+  async sdk_switch({ manager, version }) {
+    return rpc('switch_version_via_manager', { manager_name: manager, version });
+  },
+
+  async sdks({ manager, available }) {
     const out = [];
     for (const m of manager ? [manager] : ['nvm', 'rustup', 'sdkman']) {
       try {
         const v = await rpc('get_manager_installed_versions', { manager_name: m });
-        out.push(`${m}: ${v.length ? v.join(', ') : 'none installed'}`);
+        const cur = await rpc('get_manager_current_version', { manager_name: m }).catch(() => null);
+        out.push(`${m}: ${v.length ? v.join(', ') : 'none installed'}${cur ? ` (active ${cur})` : ''}`);
+        if (available && manager) out.push(`available: ${(await rpc('get_manager_available_versions', { manager_name: m })).slice(-30).join(', ')}`);
       } catch (e) {
         out.push(`${m}: unavailable (${e.message})`);
       }

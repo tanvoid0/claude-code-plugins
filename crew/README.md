@@ -45,6 +45,11 @@ plainly when it is not.
 | `env` | Machine env var names (user/system scope); values hidden unless `name` + `reveal`. Read-only. |
 | `sdks` | Installed + active versions per manager; `available: true` lists installable ones. |
 | `sdk_install` / `sdk_switch` | Install a version, or make one active, via nvm / rustup / sdkman. |
+| `project_update` | Star, archive, set stage, rename, set build/start/test commands, refresh metadata. |
+| `release` / `release_rehearse` | A project's release plan, health and history; dry-run it and wait. Shipping stays in Portal. |
+| `deployments` / `deployment_control` / `container_control` | Deployments and Docker containers: list, start, stop, logs. |
+| `custom_scripts` / `custom_script_run` | The saved script library; run one (not sudo, interactive or parameterised ones). |
+| `workflow_run` | Run an embedded automation workflow. |
 
 `project` takes an id, a name, or a path — the deepest registered project that
 contains the path wins. A progress note is a completed `Subtask` tagged `note`

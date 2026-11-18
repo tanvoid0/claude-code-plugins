@@ -302,6 +302,113 @@ const tools = [
     },
   },
   {
+    name: 'project_update',
+    description:
+      'Change a Portal project: star or unstar, archive or restore, set its SDLC stage (idea, in_progress, stable, released; "" clears), rename, describe, or set build/start/test commands. Only the fields you pass change.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: projectArg,
+        starred: { type: 'boolean' },
+        archived: { type: 'boolean' },
+        stage: { type: 'string', description: 'idea, in_progress, stable, released, or "" to clear.' },
+        name: { type: 'string' },
+        description: { type: 'string' },
+        build_command: { type: 'string' },
+        start_command: { type: 'string' },
+        test_command: { type: 'string' },
+        refresh: { type: 'boolean', description: 'Re-read git and metadata from disk.' },
+      },
+    },
+  },
+  {
+    name: 'release',
+    description:
+      "A project's release setup from .portal/pipeline.yml: the ship and rehearse plans, health issues, and recent release executions. Shipping is done in Portal only; rehearse with release_rehearse.",
+    inputSchema: { type: 'object', properties: { project: projectArg } },
+  },
+  {
+    name: 'release_rehearse',
+    description: "Rehearse a project's release (a dry run of its release workflow) and wait for the result, like pipeline_run. Runs commands on this machine.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: projectArg,
+        variables: { type: 'object', additionalProperties: { type: 'string' } },
+        wait_seconds: { type: 'integer', description: 'Default 120, max 600.' },
+      },
+    },
+  },
+  {
+    name: 'deployments',
+    description: 'Portal deployments (id, name, status, port, container) and Docker status, or with containers=true every Docker container. Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', description: 'Only this project (id, name or path).' },
+        containers: { type: 'boolean', description: 'List Docker containers instead.' },
+      },
+    },
+  },
+  {
+    name: 'deployment_control',
+    description: 'Start or stop a Portal deployment, or read the tail of its logs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Deployment id from deployments.' },
+        action: { type: 'string', enum: ['start', 'stop', 'logs'] },
+        tail: { type: 'integer', description: 'Log lines for logs. Default 80.' },
+      },
+      required: ['id', 'action'],
+    },
+  },
+  {
+    name: 'container_control',
+    description: 'Start or stop a Docker container by id (from deployments with containers=true).',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, action: { type: 'string', enum: ['start', 'stop'] } },
+      required: ['id', 'action'],
+    },
+  },
+  {
+    name: 'custom_scripts',
+    description: "Portal's saved script library (id, name, command, run count), or one script in full with id. Run one with custom_script_run.",
+    inputSchema: {
+      type: 'object',
+      properties: { search: { type: 'string' }, id: { type: 'integer' } },
+    },
+  },
+  {
+    name: 'custom_script_run',
+    description:
+      'Run a saved library script through Portal (shows in Action Runs), like run. Refuses scripts that need sudo or an interactive terminal, and scripts that take parameters.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'integer' },
+        project: projectArg,
+        cwd: { type: 'string' },
+        wait_seconds: { type: 'integer' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'workflow_run',
+    description: 'Run an embedded automation workflow (ids from automations) in a project folder and return its result. n8n workflows are not triggered from here.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        project: projectArg,
+        variables: { type: 'object', additionalProperties: { type: 'string' } },
+      },
+      required: ['id'],
+    },
+  },
+  {
     name: 'run_cancel',
     description: 'Stop a run started with the run tool (or any running Action Run) by id.',
     inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
@@ -573,6 +680,119 @@ const handlers = {
       }
     }
     return out.join('\n');
+  },
+
+  async project_update({ project: ref, starred, archived, stage, refresh, ...f }) {
+    const p = await project(ref);
+    const did = [];
+    if (starred !== undefined && !!p.starred !== starred) {
+      await rpc('toggle_project_star', { id: p.id });
+      did.push(starred ? 'starred' : 'unstarred');
+    }
+    if (archived !== undefined) {
+      await rpc('set_project_archived', { id: p.id, archived });
+      did.push(archived ? 'archived' : 'restored');
+    }
+    if (stage !== undefined) {
+      await rpc('set_project_stage', { id: p.id, stage: stage || null });
+      did.push(`stage ${stage || 'cleared'}`);
+    }
+    const fields = Object.fromEntries(Object.entries(f).filter(([, v]) => v !== undefined));
+    if (Object.keys(fields).length) {
+      await rpc('update_project', { id: p.id, ...fields });
+      did.push(`updated ${Object.keys(fields).join(', ')}`);
+    }
+    if (refresh) {
+      await rpc('refresh_project_metadata', { id: p.id });
+      did.push('refreshed');
+    }
+    return `${p.name}: ${did.join('; ') || 'nothing to change'}.`;
+  },
+
+  async release({ project: ref }) {
+    const p = await project(ref);
+    const d = await rpc('release_describe', { project_id: p.id });
+    if (!d) return `${p.name}: no release configured (.portal/pipeline.yml has no release: block).`;
+    const plan = (x) => (x?.steps ?? []).map((s) => `    ${s.id}: ${s.command ?? ''}${s.dependsOn?.length ? ` (after ${s.dependsOn.join(',')})` : ''}`).join('\n');
+    const health = await rpc('release_health', { project_id: p.id }).catch(() => []);
+    const runs = await rpc('release_list', { project_id: p.id, limit: 5 }).catch(() => []);
+    return [
+      `${p.name} release`,
+      `  ship:\n${plan(d.ship)}`,
+      d.rehearse ? `  rehearse:\n${plan(d.rehearse)}` : '  no rehearse workflow',
+      health.length ? `Health:\n${health.map((i) => `  ${i.severity ?? ''} ${i.message ?? JSON.stringify(i)}`).join('\n')}` : 'Health: ok',
+      runs.length ? `Recent:\n${runs.map((e) => `  ${e.id} ${e.status} ${ago(e.startedAt)}`).join('\n')}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  },
+
+  async release_rehearse({ project: ref, variables, wait_seconds }) {
+    const p = await project(ref);
+    const e = await rpc('release_rehearse', { project_id: p.id, ...(variables ? { variables } : {}) });
+    const deadline = Date.now() + Math.min(Math.max(wait_seconds ?? 120, 1), 600) * 1000;
+    let cur = e;
+    while (!FINISHED.includes(cur?.status) && Date.now() < deadline) {
+      await sleep(1000);
+      cur = (await rpc('get_pipeline_execution', { execution_id: e.id })) ?? cur;
+    }
+    return describeExecution(e.id);
+  },
+
+  async deployments({ project: ref, containers }) {
+    if (containers) {
+      const list = await rpc('list_containers_command');
+      return list.map((c) => `${String(c.id).slice(0, 12)} ${c.name} ${c.image} — ${c.status}${c.ports?.length ? ` [${c.ports.join(', ')}]` : ''}`).join('\n') || 'No containers.';
+    }
+    const dock = await rpc('get_docker_status_command').catch((e) => ({ message: e.message }));
+    const pid = ref ? String((await project(ref)).id) : null;
+    const list = (await rpc('get_deployments_command')).filter((d) => !pid || String(d.project_id) === pid);
+    const head = `docker: ${dock.running ? 'running' : dock.installed === false ? 'not installed' : 'not running'}${dock.version ? ` ${dock.version}` : ''}`;
+    return [head, ...list.map((d) => `${d.id} ${d.name} ${String(d.status)}${d.exposed_port ? ` :${d.exposed_port}` : ''}${d.container_id ? ` container ${String(d.container_id).slice(0, 12)}` : ''}`)].join('\n');
+  },
+
+  async deployment_control({ id, action, tail: n }) {
+    if (action === 'logs') return tail((await rpc('get_deployment_logs_command', { deployment_id: id, tail: n ?? 80 })).join('\n'), n ?? 80) || 'No logs.';
+    const d = await rpc(action === 'start' ? 'start_deployment_command' : 'stop_deployment_command', { deployment_id: id });
+    return `${d.name}: ${String(d.status)}`;
+  },
+
+  async container_control({ id, action }) {
+    await rpc(action === 'start' ? 'start_container_command' : 'stop_container_command', { container_id: id });
+    return `Container ${id}: ${action} requested.`;
+  },
+
+  async custom_scripts({ search, id }) {
+    if (id) {
+      const s = await rpc('get_custom_script', { id });
+      if (!s) throw new Error(`No script ${id}.`);
+      return `${s.id} ${s.name}${s.description ? ` — ${s.description}` : ''}\n$ ${s.command}\nparams: ${s.parameters_json || '[]'}${s.requires_sudo ? ' · needs sudo' : ''}${s.is_interactive ? ' · interactive' : ''} · ${s.run_count} runs`;
+    }
+    const q = (search ?? '').toLowerCase();
+    return (
+      (await rpc('get_all_custom_scripts'))
+        .filter((s) => !q || `${s.name} ${s.command} ${s.category ?? ''}`.toLowerCase().includes(q))
+        .map((s) => `${s.id} ${s.name}${s.category ? ` [${s.category}]` : ''}: ${s.command.split('\n')[0].slice(0, 80)} (${s.run_count} runs)`)
+        .join('\n') || 'No scripts.'
+    );
+  },
+
+  async custom_script_run({ id, project: ref, cwd, wait_seconds }) {
+    const s = await rpc('get_custom_script', { id });
+    if (!s) throw new Error(`No script ${id}.`);
+    if (s.requires_sudo || s.is_interactive) throw new Error(`"${s.name}" needs sudo or an interactive terminal — run it in Portal.`);
+    let params = [];
+    try {
+      params = JSON.parse(s.parameters_json || '[]');
+    } catch {}
+    if (params.length) throw new Error(`"${s.name}" takes parameters (${params.map((x) => x.name ?? x.key).join(', ')}); run it in Portal, or use run with the filled-in command.`);
+    return handlers.run({ command: s.command, project: ref, cwd, wait_seconds });
+  },
+
+  async workflow_run({ id, project: ref, variables }) {
+    const p = ref ? await project(ref) : null;
+    const r = await rpc('execute_embedded_workflow', { workflow_id: id, project_path: p?.path ?? null, variables: variables ?? null });
+    return JSON.stringify(r, null, 1).slice(0, 3000);
   },
 
   async run_cancel({ id }) {

@@ -9,22 +9,49 @@
 //
 // `node portal.js --selftest` checks project resolution without Portal.
 
+const { spawn } = require('node:child_process');
+const { existsSync } = require('node:fs');
+const { join } = require('node:path');
+
 const BASE = process.env.PORTAL_URL || 'http://127.0.0.1:18420';
 const STATUSES = ['pending', 'in-progress', 'completed', 'cancelled'];
 const PRIORITIES = ['low', 'medium', 'high'];
 const TYPES = ['Task', 'Bug', 'Story', 'Feature', 'Epic', 'Subtask'];
 const OPEN = ['pending', 'in-progress'];
 
+// Portal not answering: start the desktop app ourselves, once per server
+// process, and wait for the daemon. PORTAL_EXE overrides the install path.
+// ponytail: Windows default path only; set PORTAL_EXE elsewhere.
+let launched = false;
+async function startPortal() {
+  if (launched) return;
+  launched = true;
+  const exe = process.env.PORTAL_EXE ||
+    join(process.env.LOCALAPPDATA || '', 'Portal Desktop', 'portal_desktop.exe');
+  if (!existsSync(exe)) return;
+  spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    try { await fetch(`${BASE}/`); return; } catch {}
+  }
+}
+
 async function rpc(command, args = {}) {
+  const send = () => fetch(`${BASE}/rpc/${command}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(args),
+  });
   let res;
   try {
-    res = await fetch(`${BASE}/rpc/${command}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(args),
-    });
+    res = await send();
   } catch {
-    throw new Error(`Portal is not running (nothing answers at ${BASE}). Start Portal, then retry.`);
+    await startPortal();
+    try {
+      res = await send();
+    } catch {
+      throw new Error(`Portal is not running and could not be started (nothing answers at ${BASE}). Start Portal, then retry.`);
+    }
   }
   const body = await res.json().catch(() => null);
   if (!res.ok) throw new Error(`Portal ${command}: ${body?.error ?? `HTTP ${res.status}`}`);

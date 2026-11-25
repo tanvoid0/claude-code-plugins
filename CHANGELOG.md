@@ -69,6 +69,18 @@ Token budget and burn-rate gate. `plugin-audit` and `find-plugin` skills.
 
 ## crew
 
+### 0.9.1
+
+**`env_backup` tool.** The `portal` MCP server gains one tool for Portal's env
+vault backup. `action: "scan"` (default) lists every project's `.env*` files
+and whether each is backed up — read-only, and works with the vault locked
+(locked files read `unknown`). `action: "import"` backs up disk → vault: new
+files are created, unchanged ones skipped, and a differing vault copy is kept,
+never replaced. Import needs the vault unlocked once in Portal Desktop; locked,
+it says so and returns at once instead of waiting on the unlock prompt. Restore
+(vault → disk) is destructive and stays in the Portal UI. The tool never prints
+`.env` values — only names, relative paths and states.
+
 ### 0.2.0
 
 **A board.** The crew now reports to Portal's task list through a bundled

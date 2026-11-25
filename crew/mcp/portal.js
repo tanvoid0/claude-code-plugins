@@ -428,6 +428,21 @@ const tools = [
     },
   },
   {
+    name: 'env_backup',
+    description:
+      'Back up projects\' .env* files into the Portal vault (each an encrypted credential row — never a file, never a tarball, never GitHub). action "scan" (default) lists every project\'s env files and whether each is backed up; it is read-only and works with the vault LOCKED. action "import" backs up disk → vault (new files created, unchanged skipped, a differing vault copy kept not replaced); it needs the vault unlocked once in Portal Desktop and reports clearly if it is locked instead of hanging. Restore (vault → disk) is destructive and lives only in the Portal UI, not here. Never prints .env values.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['scan', 'import'],
+          description: 'scan (default, read-only, works locked) or import (back up disk to vault; needs the vault unlocked).',
+        },
+      },
+    },
+  },
+  {
     name: 'programs',
     description:
       'Installed Windows programs (what Add/Remove Programs shows), with size, publisher and whether a silent uninstall exists. Read-only. The id returned is what uninstall and program_leftovers take.',
@@ -477,6 +492,28 @@ const tools = [
         permanent: { type: 'boolean' },
       },
       required: ['ids'],
+    },
+  },
+  {
+    name: 'relocatable',
+    description:
+      'Tools whose big data folder (Ollama models, Gradle, Android emulators, npm/cargo/Hugging Face caches) can be moved to another drive and repointed with a user env var. With toolId + targetRoot it returns the exact plan (size, steps, blockers such as the tool still running). Read-only. Feeds relocate.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        toolId: { type: 'string', description: 'Id from the list; omit to list all.' },
+        targetRoot: { type: 'string', description: 'Destination parent folder, e.g. I:\build. Required with toolId.' },
+      },
+    },
+  },
+  {
+    name: 'relocate',
+    description:
+      'DESTRUCTIVE. MOVES a tool data folder to targetRoot and sets a user env var so the tool uses it. Refuses while the tool is running (close it first; never kill it yourself without asking). Run relocatable with the same args first and confirm the plan with the user. The tool and any terminal/IDE launching it must be restarted afterwards.',
+    inputSchema: {
+      type: 'object',
+      properties: { toolId: { type: 'string' }, targetRoot: { type: 'string' } },
+      required: ['toolId', 'targetRoot'],
     },
   },
   {
@@ -871,6 +908,54 @@ const handlers = {
       .join('\n');
   },
 
+  // One file = one encrypted vault credential. Never emits .env values: the scan and
+  // report carry names, relative paths and states only.
+  async env_backup({ action }) {
+    const STATE = {
+      new: 'not backed up',
+      inSync: 'in sync',
+      differs: 'differs',
+      onlyInVault: 'only in vault',
+      unknown: 'unknown (vault locked)',
+    };
+    const fmtScan = (scan) => {
+      const files = scan.files ?? [];
+      const counts = {};
+      for (const f of files) counts[f.state] = (counts[f.state] ?? 0) + 1;
+      const head = scan.vaultLocked
+        ? 'Vault is LOCKED. Files present on both sides read "unknown" until it is unlocked in Portal Desktop; scan itself never prompts.'
+        : 'Vault is unlocked.';
+      const summary = files.length
+        ? Object.entries(counts).map(([s, n]) => `${n} ${STATE[s] ?? s}`).join(', ')
+        : 'no .env files found';
+      const lines = files.map((f) => `${f.projectName}/${f.relPath} — ${STATE[f.state] ?? f.state}`);
+      const extra = [];
+      if (scan.skipped?.length) extra.push(`Not backed up (not UTF-8 text, or over 1 MiB): ${scan.skipped.join('; ')}`);
+      if (scan.unmatched?.length)
+        extra.push(`${scan.unmatched.length} vault ${scan.unmatched.length === 1 ? 'entry has' : 'entries have'} no project on this machine.`);
+      return [head, `${files.length} file(s): ${summary}`, ...lines, ...extra].join('\n');
+    };
+
+    if ((action ?? 'scan') === 'import') {
+      // Scan first so a locked vault is reported, not met with the up-to-120s unlock prompt.
+      const scan = await rpc('env_backup_scan');
+      if (scan.vaultLocked)
+        return 'Portal vault is locked — unlock once in Portal Desktop, then retry. (scan works while locked; import does not.)';
+      // files:null backs up every file found, overwrite off: new rows are created, a
+      // differing vault copy is kept (conflict), never replaced. Overwrite/restore is UI-only.
+      const items = (await rpc('env_backup_import', { files: null })).items ?? [];
+      const counts = {};
+      for (const i of items) counts[i.outcome] = (counts[i.outcome] ?? 0) + 1;
+      const summary = Object.entries(counts).map(([o, n]) => `${n} ${o}`).join(', ') || 'nothing to do';
+      const changed = items
+        .filter((i) => i.outcome !== 'unchanged' && i.outcome !== 'identical')
+        .map((i) => `${i.outcome}: ${i.projectName}/${i.relPath}${i.detail ? ` (${i.detail})` : ''}`);
+      return [`Backed up disk → vault. ${summary}.`, ...changed].join('\n');
+    }
+
+    return fmtScan(await rpc('env_backup_scan'));
+  },
+
   async programs({ search, system }) {
     const q = (search ?? '').toLowerCase();
     const hits = (await rpc('uninstaller_list_programs'))
@@ -919,6 +1004,26 @@ const handlers = {
     if (!items.length) return 'None of those ids exist in a fresh scan.';
     const r = await rpc('clean_dev_items', { items });
     return [`cleaned ${r.cleaned.length}, failed ${r.failed.length}`, ...r.failed.map((f) => `  ${f.path}: ${f.error}`)].join('\n');
+  },
+
+  async relocatable({ toolId, targetRoot }) {
+    if (!toolId) {
+      const tools = await rpc('list_relocatable_tools', {});
+      return tools.map((t) => `${t.id} | ${t.label} | ${t.exists ? t.source : 'not present'} | ${t.envVar}=${t.currentEnv ?? '(unset)'}`).join('\n');
+    }
+    if (!targetRoot) return 'targetRoot is required with toolId.';
+    const p = await rpc('plan_relocation', { request: { toolId, targetRoot } });
+    return [
+      `${p.toolId}: ${(p.sourceBytes / 1073741824).toFixed(2)} GB  ${p.source} -> ${p.dest}`,
+      ...p.steps.map((x) => `  - ${x}`),
+      p.blockers.length ? `BLOCKED: ${p.blockers.join('; ')}` : 'Ready to relocate.',
+    ].join('\n');
+  },
+
+  async relocate({ toolId, targetRoot }) {
+    const r = await rpc('apply_relocation', { request: { toolId, targetRoot } });
+    return `moved to ${r.dest}; ${r.envVar}=${r.envValue}
+${r.note}`;
   },
 
   async sdk_install({ manager, version }) {

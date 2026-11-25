@@ -480,6 +480,28 @@ const tools = [
     },
   },
   {
+    name: 'relocatable',
+    description:
+      'Tools whose big data folder (Ollama models, Gradle, Android emulators, npm/cargo/Hugging Face caches) can be moved to another drive and repointed with a user env var. With toolId + targetRoot it returns the exact plan (size, steps, blockers such as the tool still running). Read-only. Feeds relocate.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        toolId: { type: 'string', description: 'Id from the list; omit to list all.' },
+        targetRoot: { type: 'string', description: 'Destination parent folder, e.g. I:\build. Required with toolId.' },
+      },
+    },
+  },
+  {
+    name: 'relocate',
+    description:
+      'DESTRUCTIVE. MOVES a tool data folder to targetRoot and sets a user env var so the tool uses it. Refuses while the tool is running (close it first; never kill it yourself without asking). Run relocatable with the same args first and confirm the plan with the user. The tool and any terminal/IDE launching it must be restarted afterwards.',
+    inputSchema: {
+      type: 'object',
+      properties: { toolId: { type: 'string' }, targetRoot: { type: 'string' } },
+      required: ['toolId', 'targetRoot'],
+    },
+  },
+  {
     name: 'sdk_install',
     description:
       'Install an SDK version through a version manager (nvm, rustup, sdkman). Downloads and runs the manager on this machine; can take minutes. Use sdks with available=true to see versions.',
@@ -919,6 +941,26 @@ const handlers = {
     if (!items.length) return 'None of those ids exist in a fresh scan.';
     const r = await rpc('clean_dev_items', { items });
     return [`cleaned ${r.cleaned.length}, failed ${r.failed.length}`, ...r.failed.map((f) => `  ${f.path}: ${f.error}`)].join('\n');
+  },
+
+  async relocatable({ toolId, targetRoot }) {
+    if (!toolId) {
+      const tools = await rpc('list_relocatable_tools', {});
+      return tools.map((t) => `${t.id} | ${t.label} | ${t.exists ? t.source : 'not present'} | ${t.envVar}=${t.currentEnv ?? '(unset)'}`).join('\n');
+    }
+    if (!targetRoot) return 'targetRoot is required with toolId.';
+    const p = await rpc('plan_relocation', { request: { toolId, targetRoot } });
+    return [
+      `${p.toolId}: ${(p.sourceBytes / 1073741824).toFixed(2)} GB  ${p.source} -> ${p.dest}`,
+      ...p.steps.map((x) => `  - ${x}`),
+      p.blockers.length ? `BLOCKED: ${p.blockers.join('; ')}` : 'Ready to relocate.',
+    ].join('\n');
+  },
+
+  async relocate({ toolId, targetRoot }) {
+    const r = await rpc('apply_relocation', { request: { toolId, targetRoot } });
+    return `moved to ${r.dest}; ${r.envVar}=${r.envValue}
+${r.note}`;
   },
 
   async sdk_install({ manager, version }) {

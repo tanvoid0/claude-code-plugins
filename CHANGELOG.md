@@ -69,6 +69,23 @@ Token budget and burn-rate gate. `plugin-audit` and `find-plugin` skills.
 
 ## crew
 
+### 0.10.0
+
+**`db`, `docs` and `k8s` tools.** Three more Portal areas on the `portal` MCP
+server, each one tool with an `action`.
+
+- `db` — read-only Database Explorer: sources, tables, describe, rows, and
+  `query`. A query must be one `SELECT` / `WITH ... SELECT` (writes and `;`
+  chains are refused) and returns at most 200 rows, flagged when truncated.
+  Anything naming credential, vault, secret, GitHub-connection, device-approval or env-file tables is refused, since
+  Portal's own database is one of the sources.
+- `docs` — list / search, get, create and update documents. No delete, no AI
+  generation. Long content is cut on read.
+- `k8s` — read-only: clusters, namespaces, pods, deployments, events, pod logs
+  (max 500 lines). It never connects: with no cluster connected in Portal it says
+  so and stops. No secrets, configmaps, apply, scale, restart, exec or
+  port-forward.
+
 ### 0.9.1
 
 **`env_backup` tool.** The `portal` MCP server gains one tool for Portal's env

@@ -50,6 +50,9 @@ plainly when it is not.
 | `deployments` / `deployment_control` / `container_control` | Deployments and Docker containers: list, start, stop, logs. |
 | `custom_scripts` / `custom_script_run` | The saved script library; run one (not sudo, interactive or parameterised ones). |
 | `workflow_run` | Run an embedded automation workflow. |
+| `db` | Database Explorer, read-only: sources, tables, describe, rows, one `SELECT` (200 rows max). Credential/vault tables refused. |
+| `docs` | Portal documents: list/search, get, create, update. No delete. |
+| `k8s` | Kubernetes, read-only: clusters, namespaces, pods, deployments, events, pod logs. Needs a cluster connected in Portal; never connects. |
 
 `project` takes an id, a name, or a path — the deepest registered project that
 contains the path wins. A progress note is a completed `Subtask` tagged `note`

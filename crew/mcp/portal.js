@@ -582,6 +582,55 @@ const tools = [
     description: 'Status and the end of the output of a run started with the run tool (still running, finished, failed, or stopped by the user).',
     inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Run id from the run tool.' } }, required: ['id'] },
   },
+  {
+    name: 'db',
+    description:
+      'Read-only look into Portal\'s Database Explorer sources (SQLite, Postgres, MySQL). action "sources" (default) lists them; "tables" and "describe" (table) show the schema; "rows" (table, limit, offset) pages a table; "query" runs one SELECT (max 200 rows, flagged when truncated). Writes are refused; tables holding credentials or the vault are off limits.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['sources', 'tables', 'describe', 'rows', 'query'] },
+        source: { type: 'string', description: 'Source id from action "sources".' },
+        table: { type: 'string', description: 'For describe and rows.' },
+        sql: { type: 'string', description: 'For query: a single SELECT (or WITH ... SELECT).' },
+        limit: { type: 'integer', description: 'Rows for "rows". Default 50, max 200.' },
+        offset: { type: 'integer', description: 'First row for "rows". Default 0.' },
+      },
+    },
+  },
+  {
+    name: 'docs',
+    description:
+      'Portal documents. action "list" (default, newest first; query to search), "get" (id, full content, long ones cut), "create" (title, content, tags), "update" (id plus any of title, content, tags, archived; content replaces the whole text). No delete.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'get', 'create', 'update'] },
+        id: { type: 'integer', description: 'Document id, for get and update.' },
+        query: { type: 'string', description: 'For list: search the documents.' },
+        title: { type: 'string' },
+        content: { type: 'string' },
+        tags: { type: 'array', items: { type: 'string' } },
+        archived: { type: 'boolean' },
+      },
+    },
+  },
+  {
+    name: 'k8s',
+    description:
+      'Read-only Kubernetes in Portal. action "clusters" (default) lists kubeconfig clusters and which is connected; once one is connected in Portal: "namespaces", "pods", "deployments", "events" (namespace optional) and "logs" (namespace, pod, container, tail). Never connects or changes anything; secrets and configmaps are not exposed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['clusters', 'namespaces', 'pods', 'deployments', 'events', 'logs'] },
+        namespace: { type: 'string', description: 'Default: all namespaces. Required for logs.' },
+        pod: { type: 'string', description: 'For logs.' },
+        container: { type: 'string', description: 'For logs, when the pod has several.' },
+        tail: { type: 'integer', description: 'Log lines. Default 80, max 500.' },
+        limit: { type: 'integer', description: 'Rows for lists. Default 50, max 200.' },
+      },
+    },
+  },
 ];
 
 // --- runs -----------------------------------------------------------------
@@ -654,6 +703,34 @@ async function describeExecution(id, stepId) {
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+// db / docs / k8s share these: cap a block of text, cap a list.
+const clip = (str, n = 20000) => (str.length > n ? `${str.slice(0, n)}\n…truncated (${str.length - n} more chars).` : str);
+const lines = (list, n, f) => list.slice(0, n).map(f).join('\n') + (list.length > n ? `\n…${list.length - n} more; narrow it or raise limit.` : '');
+const cap = (limit) => Math.min(Math.max(limit ?? 50, 1), 200);
+
+// db: Portal's own database holds the vault and tokens; keep those tables out of reach.
+// ponytail: name match on the text, so a harmless column called "secret" is refused too; no SQL parser.
+const DB_SECRET = /credential|vault|secret|github_connections|device_approvals|project_env|sdk_environment_variables/i;
+const cell = (v) => {
+  const t = v === null ? 'NULL' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+  return t.length > 120 ? `${t.slice(0, 120)}…` : t;
+};
+
+// One statement, SELECT or WITH ... SELECT, no write keyword. Defence in depth: SQLite opens
+// read-only and the server drivers wrap the text in SELECT * FROM (...).
+function readOnlySql(sql) {
+  const s = String(sql)
+    .replace(/--.*$/gm, ' ')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/'(?:[^']|'')*'|"(?:[^"]|"")*"|`[^`]*`/g, "''")
+    .trim()
+    .replace(/;+$/, '')
+    .trim();
+  if (!/^(select|with)\b/i.test(s) || s.includes(';') || /\b(insert|update|delete|drop|alter|create|attach|pragma|truncate|into|merge)\b/i.test(s)) {
+    throw new Error('db runs a single read-only SELECT (or WITH ... SELECT); writes are not available here.');
+  }
 }
 
 const handlers = {
@@ -1049,6 +1126,93 @@ ${r.note}`;
     return out.join('\n');
   },
 
+  async db({ action = 'sources', source, table, sql, limit, offset }) {
+    if (action === 'sources') {
+      return (await rpc('db_list_sources')).map((x) => `${x.id} ${x.label} [${x.engine}] ${x.detail}`).join('\n') || 'No sources.';
+    }
+    if (!source) throw new Error('source is required (an id from db action "sources").');
+    if (DB_SECRET.test(`${table ?? ''} ${sql ?? ''}`)) throw new Error('That touches credential or vault data, which db does not expose.');
+    if (action === 'tables') {
+      return lines(await rpc('db_list_tables', { source_id: source }), 200, (x) => `${x.name}${x.kind === 'table' ? '' : ` (${x.kind})`}`) || 'No tables.';
+    }
+    if ((action === 'describe' || action === 'rows') && !table) throw new Error(`table is required for ${action}.`);
+    if (action === 'describe') {
+      const cols = await rpc('db_describe_table', { source_id: source, table });
+      return cols.map((c) => `${c.name} ${c.dataType}${c.pk ? ' pk' : ''}${c.notNull ? ' not null' : ''}${c.defaultValue != null ? ` default ${c.defaultValue}` : ''}`).join('\n') || `No columns for ${table}.`;
+    }
+    let r;
+    if (action === 'rows') r = await rpc('db_fetch_rows', { source_id: source, table, limit: cap(limit), offset: Math.max(offset ?? 0, 0) });
+    else if (action === 'query') {
+      if (!sql) throw new Error('sql is required for query.');
+      readOnlySql(sql);
+      r = await rpc('db_run_query', { source_id: source, sql });
+    } else throw new Error(`Unknown db action ${action}.`);
+    const rows = r.rows.slice(0, 200);
+    return clip([r.columns.join(' | '), ...rows.map((x) => x.map(cell).join(' | ')), `${rows.length} row(s)${r.truncated || r.rows.length > 200 ? ', truncated at 200' : ''}`].join('\n'));
+  },
+
+  async docs({ action = 'list', id, query, title, content, tags: tagList, archived }) {
+    const row = (d) => `#${d.id} ${d.title}${tags(d).length ? ` [${tags(d).join(', ')}]` : ''}${d.is_archived ? ' (archived)' : ''} · ${ago(d.updated_at ?? d.created_at)}`;
+    if (action === 'list') {
+      const docs = query ? await rpc('search_documents', { query }) : await rpc('get_documents');
+      docs.sort((a, b) => Date.parse(b.updated_at ?? 0) - Date.parse(a.updated_at ?? 0));
+      return lines(docs, 100, row) || 'No documents.';
+    }
+    if (action === 'get') {
+      if (!id) throw new Error('id is required for get.');
+      const d = await rpc('get_document', { id });
+      if (!d) throw new Error(`No document #${id}.`);
+      return clip(`${row(d)}\n\n${d.content}`, 12000);
+    }
+    if (action === 'create') {
+      if (!title || content === undefined) throw new Error('title and content are required for create.');
+      return `Created ${row(await rpc('create_document', { command: { title, content, tags: tagList, is_archived: archived } }))}`;
+    }
+    if (action === 'update') {
+      if (!id) throw new Error('id is required for update.');
+      const command = { title, content, tags: tagList, is_archived: archived };
+      if (Object.values(command).every((v) => v === undefined)) throw new Error('Nothing to change: pass title, content, tags or archived.');
+      return `Updated ${row(await rpc('update_document', { id, command }))}`;
+    }
+    throw new Error(`Unknown docs action ${action}.`);
+  },
+
+  async k8s({ action = 'clusters', namespace, pod, container, tail: n, limit }) {
+    const max = cap(limit);
+    if (action === 'clusters') {
+      const cur = await rpc('k8s_get_current_cluster').catch(() => null);
+      const state = (c) => (typeof c.status === 'string' ? c.status : `error: ${c.status?.Error ?? '?'}`);
+      return (
+        lines(await rpc('k8s_load_clusters'), max, (c) => `${cur?.name === c.name ? '*' : ' '} ${c.name} (context ${c.context}, ns ${c.namespace}) ${state(c)}${c.version ? ` ${c.version}` : ''}`) ||
+        'No clusters in the kubeconfig.'
+      );
+    }
+    // The shared client is only set by Portal's own connect; never connect on the caller's behalf.
+    if (!(await rpc('k8s_is_connected'))) {
+      return 'No Kubernetes cluster is connected in Portal. Connect one on its Kubernetes page, then retry; this tool never connects. (action "clusters" lists what is available.)';
+    }
+    const ns = namespace || null;
+    if (action === 'namespaces') return lines(await rpc('k8s_list_namespaces'), max, (x) => `${x.name} ${x.status} ${x.age}`) || 'None.';
+    if (action === 'pods') {
+      return lines(await rpc('k8s_list_pods', { namespace: ns }), max, (p) => `${p.namespace}/${p.name} ${p.status} ready ${p.ready} restarts ${p.restarts} ${p.age}`) || 'No pods.';
+    }
+    if (action === 'deployments') {
+      const d = await rpc('k8s_list_deployments', { namespace: ns });
+      return lines(d, max, (x) => `${x.namespace}/${x.name} ${x.available}/${x.desired} available, ${x.up_to_date} up to date ${x.age}`) || 'No deployments.';
+    }
+    if (action === 'events') {
+      const ev = (await rpc('k8s_list_events', { namespace: ns })).sort((a, b) => Date.parse(b.last_timestamp ?? 0) - Date.parse(a.last_timestamp ?? 0));
+      return lines(ev, max, (e) => `${ago(e.last_timestamp)} ${e.type_ ?? ''} ${e.reason} ${e.involved_object?.kind}/${e.involved_object?.name}${e.count > 1 ? ` x${e.count}` : ''}: ${String(e.message).slice(0, 200)}`) || 'No events.';
+    }
+    if (action === 'logs') {
+      if (!namespace || !pod) throw new Error('namespace and pod are required for logs.');
+      const k = Math.min(Math.max(n ?? 80, 1), 500);
+      const raw = await rpc('k8s_get_pod_logs', { namespace, pod_name: pod, container: container ?? null, follow: false, tail_lines: k });
+      return clip(tail(raw, k)) || 'No logs.';
+    }
+    throw new Error(`Unknown k8s action ${action}.`);
+  },
+
   async create_project({ name, path, description }) {
     const dir = path || process.cwd();
     const norm = (s) => s.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
@@ -1238,6 +1402,10 @@ function selftest() {
   assert.equal(failureNote({ status: 'failed', error: 'Working directory does not exist: X\n' }, ''), '\n--- error ---\nWorking directory does not exist: X');
   assert.equal(failureNote({ status: 'failed', error: 'Exit code 1\nboom' }, 'boom'), ''); // the output already says it
   assert.equal(failureNote({ status: 'success' }, ''), '');
+  for (const ok of ['select 1', ' SELECT * FROM t; ', 'with a as (select 1) select * from a', "select ';' as x -- drop table t", 'select "update" from t'])
+    assert.doesNotThrow(() => readOnlySql(ok), ok);
+  for (const bad of ['delete from t', 'select 1; drop table t', 'with a as (delete from t returning 1) select * from a', 'pragma writable_schema=1', 'select * into x from t', '/* hi */ update t set a=1'])
+    assert.throws(() => readOnlySql(bad), bad);
   console.log('portal.js selftest ok');
 }
 
